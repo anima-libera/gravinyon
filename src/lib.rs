@@ -138,6 +138,35 @@ pub fn run() {
 		label: Some("Light Direction Bind Group"),
 	});
 
+	let aspect_ratio = config.width as f32 / config.height as f32;
+	let aspect_ratio_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Aspect Ratio Buffer"),
+		contents: bytemuck::cast_slice(&[aspect_ratio]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let aspect_ratio_bind_group_layout =
+		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			entries: &[wgpu::BindGroupLayoutEntry {
+				binding: 1,
+				visibility: wgpu::ShaderStages::VERTEX,
+				ty: wgpu::BindingType::Buffer {
+					ty: wgpu::BufferBindingType::Uniform,
+					has_dynamic_offset: false,
+					min_binding_size: None,
+				},
+				count: None,
+			}],
+			label: Some("Aspect Ratio Bind Group Layout"),
+		});
+	let aspect_ratio_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+		layout: &aspect_ratio_bind_group_layout,
+		entries: &[wgpu::BindGroupEntry {
+			binding: 1,
+			resource: aspect_ratio_buffer.as_entire_binding(),
+		}],
+		label: Some("Aspect Ratio Bind Group"),
+	});
+
 	fn make_z_buffer_texture_view(
 		device: &wgpu::Device,
 		format: wgpu::TextureFormat,
@@ -190,7 +219,10 @@ pub fn run() {
 		let object_render_pipeline_layout =
 			device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 				label: Some("Object Render Pipeline Layout"),
-				bind_group_layouts: &[&light_direction_bind_group_layout],
+				bind_group_layouts: &[
+					&light_direction_bind_group_layout,
+					&aspect_ratio_bind_group_layout,
+				],
 				push_constant_ranges: &[],
 			});
 		device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -278,6 +310,12 @@ pub fn run() {
 				config.height = height;
 				window_surface.configure(&device, &config);
 				z_buffer_view = make_z_buffer_texture_view(&device, z_buffer_format, width, height);
+				let aspect_ratio = config.width as f32 / config.height as f32;
+				queue.write_buffer(
+					&aspect_ratio_buffer,
+					0,
+					bytemuck::cast_slice(&[aspect_ratio]),
+				);
 			},
 
 			_ => {},
@@ -310,6 +348,7 @@ pub fn run() {
 
 			render_pass.set_pipeline(&object_render_pipeline);
 			render_pass.set_bind_group(0, &light_direction_bind_group, &[]);
+			render_pass.set_bind_group(1, &aspect_ratio_bind_group, &[]);
 
 			render_pass.set_vertex_buffer(0, test_object_vertex_buffer.slice(..));
 			render_pass.draw(0..(test_object_vertices.len() as u32), 0..1);

@@ -10,11 +10,13 @@ struct VertexOutput {
 };
 
 @group(0) @binding(0) var<uniform> uniform_light_direction: vec3<f32>;
+@group(1) @binding(1) var<uniform> uniform_aspect_ratio: f32;
 
 @vertex
 fn vertex_shader_main(vertex_input: VertexInput) -> VertexOutput {
 	var vertex_output: VertexOutput;
 	vertex_output.screen_position = vec4<f32>(vertex_input.position, 1.0);
+	vertex_output.screen_position.y *= uniform_aspect_ratio;
 	var shade = dot(vertex_input.normal, uniform_light_direction);
 	shade = clamp(shade, 0.0, 1.0);
 	shade = 1.0; // No shadow for now.
