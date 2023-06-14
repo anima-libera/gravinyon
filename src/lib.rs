@@ -344,22 +344,36 @@ pub fn run() {
 		})
 	};
 
+	enum ObjectMesh {
+		SquareObstacle,
+		Ship,
+	}
 	struct Object {
 		position: cgmath::Point2<f32>,
 		angle: f32,
 		scale: f32,
+		mesh: ObjectMesh,
 		motion: cgmath::Vector2<f32>,
 		angle_rotation: f32,
 	}
-	let mut obstacle_objects = Vec::new();
+	let mut objects = Vec::new();
+	objects.push(Object {
+		position: (0.0, 0.0).into(),
+		angle: 0.0,
+		scale: 0.02,
+		mesh: ObjectMesh::Ship,
+		motion: (0.0, 0.0).into(),
+		angle_rotation: 0.0,
+	});
 	for _i in 0..20 {
-		obstacle_objects.push(Object {
+		objects.push(Object {
 			position: cgmath::Point2 {
 				x: rand::thread_rng().gen_range(-1.0..1.0),
 				y: rand::thread_rng().gen_range(-1.0..1.0),
 			},
 			angle: rand::thread_rng().gen_range(0.0..TAU),
 			scale: rand::thread_rng().gen_range(0.02..0.04),
+			mesh: ObjectMesh::SquareObstacle,
 			motion: cgmath::Vector2 {
 				x: rand::thread_rng().gen_range(-0.003..0.0001),
 				y: rand::thread_rng().gen_range(-0.001..0.001),
@@ -391,6 +405,29 @@ pub fn run() {
 			contents: bytemuck::cast_slice(&square_obstacle_mesh),
 			usage: wgpu::BufferUsages::VERTEX,
 		});
+
+	let mut ship_mesh = Vec::new();
+	let mut add_triangle = |positions: [[f32; 3]; 3]| {
+		let a: cgmath::Vector3<f32> = positions[0].into();
+		let b: cgmath::Vector3<f32> = positions[1].into();
+		let c: cgmath::Vector3<f32> = positions[2].into();
+		let normal = (a - b).cross(c - b).normalize();
+		let normal: [f32; 3] = normal.into();
+		let color = [1.0, 0.6, 1.0];
+		ship_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
+		ship_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
+		ship_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
+	};
+	let center = [0.0, 0.0, 0.1];
+	add_triangle([center, [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]]);
+	add_triangle([center, [0.0, -0.5, 0.0], [1.0, -1.0, 0.0]]);
+	add_triangle([center, [-1.0, -1.0, 0.0], [0.0, -0.5, 0.0]]);
+	add_triangle([center, [0.0, 1.0, 0.0], [-1.0, -1.0, 0.0]]);
+	let ship_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Ship Vertex Buffer"),
+		contents: bytemuck::cast_slice(&ship_mesh),
+		usage: wgpu::BufferUsages::VERTEX,
+	});
 
 	use winit::event::*;
 	event_loop.run(move |event, _, control_flow| match event {
@@ -424,18 +461,18 @@ pub fn run() {
 		},
 
 		Event::MainEventsCleared => {
-			for obstacle_object in obstacle_objects.iter_mut() {
-				obstacle_object.angle += obstacle_object.angle_rotation;
-				obstacle_object.position += obstacle_object.motion;
-				if obstacle_object.position.x <= -1.1 {
-					obstacle_object.position.x = 1.1;
-				} else if obstacle_object.position.x > 1.1 {
-					obstacle_object.position.x = -1.1;
+			for object in objects.iter_mut() {
+				object.angle += object.angle_rotation;
+				object.position += object.motion;
+				if object.position.x <= -1.1 {
+					object.position.x = 1.1;
+				} else if object.position.x > 1.1 {
+					object.position.x = -1.1;
 				}
-				if obstacle_object.position.y <= -1.1 {
-					obstacle_object.position.y = 1.1;
-				} else if obstacle_object.position.y > 1.1 {
-					obstacle_object.position.y = -1.1;
+				if object.position.y <= -1.1 {
+					object.position.y = 1.1;
+				} else if object.position.y > 1.1 {
+					object.position.y = -1.1;
 				}
 			}
 
@@ -471,22 +508,14 @@ pub fn run() {
 				queue.submit(std::iter::once(encoder.finish()));
 			}
 
-			for obstacle_object in obstacle_objects.iter() {
+			for object in objects.iter() {
 				queue.write_buffer(
 					&position_buffer,
 					0,
-					bytemuck::cast_slice(&[Vector2Pod { values: obstacle_object.position.into() }]),
+					bytemuck::cast_slice(&[Vector2Pod { values: object.position.into() }]),
 				);
-				queue.write_buffer(
-					&angle_buffer,
-					0,
-					bytemuck::cast_slice(&[obstacle_object.angle]),
-				);
-				queue.write_buffer(
-					&scale_buffer,
-					0,
-					bytemuck::cast_slice(&[obstacle_object.scale]),
-				);
+				queue.write_buffer(&angle_buffer, 0, bytemuck::cast_slice(&[object.angle]));
+				queue.write_buffer(&scale_buffer, 0, bytemuck::cast_slice(&[object.scale]));
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 					label: Some("Object Render Encoder"),
@@ -508,8 +537,16 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_bind_group, &[]);
 
-				render_pass.set_vertex_buffer(0, square_obstacle_vertex_buffer.slice(..));
-				render_pass.draw(0..(square_obstacle_mesh.len() as u32), 0..1);
+				match object.mesh {
+					ObjectMesh::SquareObstacle => {
+						render_pass.set_vertex_buffer(0, square_obstacle_vertex_buffer.slice(..));
+						render_pass.draw(0..(square_obstacle_mesh.len() as u32), 0..1);
+					},
+					ObjectMesh::Ship => {
+						render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
+						render_pass.draw(0..(ship_mesh.len() as u32), 0..1);
+					},
+				}
 
 				// Release `render_pass.parent` which is a ref mut to `encoder`.
 				drop(render_pass);
