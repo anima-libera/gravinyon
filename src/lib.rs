@@ -366,7 +366,7 @@ pub fn run() {
 		motion: (0.0, 0.0).into(),
 		angle_rotation: 0.0,
 	});
-	for _i in 0..20 {
+	for _i in 0..30 {
 		objects.push(Object {
 			position: cgmath::Point2 {
 				x: rand::thread_rng().gen_range(-1.0..1.0),
@@ -464,6 +464,17 @@ pub fn run() {
 				cursor_position.x = position.x as f32 / config.width as f32 * 2.0 - 1.0;
 				cursor_position.y =
 					(-position.y as f32 / config.height as f32 * 2.0 + 1.0) / aspect_ratio;
+			},
+
+			WindowEvent::MouseInput {
+				button: MouseButton::Right,
+				state: ElementState::Pressed,
+				..
+			} => {
+				let ship = objects.get_mut(0).unwrap();
+				let force =
+					cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) } * 0.003;
+				ship.motion += force;
 			},
 
 			_ => {},
