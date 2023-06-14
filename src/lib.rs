@@ -345,20 +345,25 @@ pub fn run() {
 	};
 
 	struct Object {
-		position: cgmath::Vector2<f32>,
+		position: cgmath::Point2<f32>,
 		angle: f32,
 		scale: f32,
+		motion: cgmath::Vector2<f32>,
 		angle_rotation: f32,
 	}
 	let mut obstacle_objects = Vec::new();
-	for _i in 0..100 {
+	for _i in 0..20 {
 		obstacle_objects.push(Object {
-			position: cgmath::Vector2 {
+			position: cgmath::Point2 {
 				x: rand::thread_rng().gen_range(-1.0..1.0),
 				y: rand::thread_rng().gen_range(-1.0..1.0),
 			},
 			angle: rand::thread_rng().gen_range(0.0..TAU),
 			scale: rand::thread_rng().gen_range(0.02..0.04),
+			motion: cgmath::Vector2 {
+				x: rand::thread_rng().gen_range(-0.003..0.0001),
+				y: rand::thread_rng().gen_range(-0.001..0.001),
+			},
 			angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
 		});
 	}
@@ -421,6 +426,17 @@ pub fn run() {
 		Event::MainEventsCleared => {
 			for obstacle_object in obstacle_objects.iter_mut() {
 				obstacle_object.angle += obstacle_object.angle_rotation;
+				obstacle_object.position += obstacle_object.motion;
+				if obstacle_object.position.x <= -1.1 {
+					obstacle_object.position.x = 1.1;
+				} else if obstacle_object.position.x > 1.1 {
+					obstacle_object.position.x = -1.1;
+				}
+				if obstacle_object.position.y <= -1.1 {
+					obstacle_object.position.y = 1.1;
+				} else if obstacle_object.position.y > 1.1 {
+					obstacle_object.position.y = -1.1;
+				}
 			}
 
 			let window_texture = window_surface.get_current_texture().unwrap();
