@@ -344,6 +344,7 @@ pub fn run() {
 		})
 	};
 
+	#[derive(PartialEq, Eq)]
 	enum ObjectMesh {
 		SquareObstacle,
 		Ship,
@@ -471,7 +472,9 @@ pub fn run() {
 		Event::MainEventsCleared => {
 			{
 				let ship = objects.get_mut(0).unwrap();
-				ship.position = cursor_position;
+				let ship_to_cursor = cursor_position - ship.position;
+				let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+				ship.angle = ship_to_cursor_angle;
 			}
 
 			for object in objects.iter_mut() {
@@ -522,12 +525,18 @@ pub fn run() {
 			}
 
 			for object in objects.iter() {
+				let angle = if object.mesh == ObjectMesh::Ship {
+					object.angle - TAU / 4.0
+				} else {
+					object.angle
+				};
+
 				queue.write_buffer(
 					&position_buffer,
 					0,
 					bytemuck::cast_slice(&[Vector2Pod { values: object.position.into() }]),
 				);
-				queue.write_buffer(&angle_buffer, 0, bytemuck::cast_slice(&[object.angle]));
+				queue.write_buffer(&angle_buffer, 0, bytemuck::cast_slice(&[angle]));
 				queue.write_buffer(&scale_buffer, 0, bytemuck::cast_slice(&[object.scale]));
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
