@@ -1,4 +1,7 @@
+use std::f32::consts::TAU;
+
 use bytemuck::Zeroable;
+use rand::Rng;
 use wgpu::util::DeviceExt;
 use winit::{
 	event_loop::{ControlFlow, EventLoop},
@@ -23,6 +26,15 @@ struct ObjectVertexPod {
 #[derive(bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vector3Pod {
 	values: [f32; 3],
+}
+
+/// Vector in 2D.
+#[derive(Copy, Clone, Debug)]
+/// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Vector2Pod {
+	values: [f32; 2],
 }
 
 pub fn run() {
@@ -110,63 +122,6 @@ pub fn run() {
 	};
 	window_surface.configure(&device, &config);
 
-	let light_direction_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Light Direction Buffer"),
-		contents: bytemuck::cast_slice(&[Vector3Pod::zeroed()]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let light_direction_bind_group_layout =
-		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			entries: &[wgpu::BindGroupLayoutEntry {
-				binding: 0,
-				visibility: wgpu::ShaderStages::VERTEX,
-				ty: wgpu::BindingType::Buffer {
-					ty: wgpu::BufferBindingType::Uniform,
-					has_dynamic_offset: false,
-					min_binding_size: None,
-				},
-				count: None,
-			}],
-			label: Some("Light Direction Bind Group Layout"),
-		});
-	let light_direction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-		layout: &light_direction_bind_group_layout,
-		entries: &[wgpu::BindGroupEntry {
-			binding: 0,
-			resource: light_direction_buffer.as_entire_binding(),
-		}],
-		label: Some("Light Direction Bind Group"),
-	});
-
-	let aspect_ratio = config.width as f32 / config.height as f32;
-	let aspect_ratio_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Aspect Ratio Buffer"),
-		contents: bytemuck::cast_slice(&[aspect_ratio]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let aspect_ratio_bind_group_layout =
-		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			entries: &[wgpu::BindGroupLayoutEntry {
-				binding: 1,
-				visibility: wgpu::ShaderStages::VERTEX,
-				ty: wgpu::BindingType::Buffer {
-					ty: wgpu::BufferBindingType::Uniform,
-					has_dynamic_offset: false,
-					min_binding_size: None,
-				},
-				count: None,
-			}],
-			label: Some("Aspect Ratio Bind Group Layout"),
-		});
-	let aspect_ratio_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-		layout: &aspect_ratio_bind_group_layout,
-		entries: &[wgpu::BindGroupEntry {
-			binding: 1,
-			resource: aspect_ratio_buffer.as_entire_binding(),
-		}],
-		label: Some("Aspect Ratio Bind Group"),
-	});
-
 	fn make_z_buffer_texture_view(
 		device: &wgpu::Device,
 		format: wgpu::TextureFormat,
@@ -189,6 +144,130 @@ pub fn run() {
 	let z_buffer_format = wgpu::TextureFormat::Depth32Float;
 	let mut z_buffer_view =
 		make_z_buffer_texture_view(&device, z_buffer_format, config.width, config.height);
+
+	let light_direction_binding = 0;
+	let light_direction_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Light Direction Buffer"),
+		contents: bytemuck::cast_slice(&[Vector3Pod::zeroed()]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let light_direction_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+		binding: light_direction_binding,
+		visibility: wgpu::ShaderStages::VERTEX,
+		ty: wgpu::BindingType::Buffer {
+			ty: wgpu::BufferBindingType::Uniform,
+			has_dynamic_offset: false,
+			min_binding_size: None,
+		},
+		count: None,
+	};
+
+	let aspect_ratio = config.width as f32 / config.height as f32;
+	let aspect_ratio_binding = 1;
+	let aspect_ratio_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Aspect Ratio Buffer"),
+		contents: bytemuck::cast_slice(&[aspect_ratio]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let aspect_ratio_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+		binding: aspect_ratio_binding,
+		visibility: wgpu::ShaderStages::VERTEX,
+		ty: wgpu::BindingType::Buffer {
+			ty: wgpu::BufferBindingType::Uniform,
+			has_dynamic_offset: false,
+			min_binding_size: None,
+		},
+		count: None,
+	};
+
+	let position_binding = 2;
+	let position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Position Buffer"),
+		contents: bytemuck::cast_slice(&[Vector2Pod::zeroed()]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let position_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+		binding: position_binding,
+		visibility: wgpu::ShaderStages::VERTEX,
+		ty: wgpu::BindingType::Buffer {
+			ty: wgpu::BufferBindingType::Uniform,
+			has_dynamic_offset: false,
+			min_binding_size: None,
+		},
+		count: None,
+	};
+
+	let angle_binding = 3;
+	let angle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Angle Buffer"),
+		contents: bytemuck::cast_slice(&[f32::zeroed()]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let angle_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+		binding: angle_binding,
+		visibility: wgpu::ShaderStages::VERTEX,
+		ty: wgpu::BindingType::Buffer {
+			ty: wgpu::BufferBindingType::Uniform,
+			has_dynamic_offset: false,
+			min_binding_size: None,
+		},
+		count: None,
+	};
+
+	let scale_binding = 4;
+	let scale_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Scale Buffer"),
+		contents: bytemuck::cast_slice(&[f32::zeroed()]),
+		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+	});
+	let scale_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+		binding: scale_binding,
+		visibility: wgpu::ShaderStages::VERTEX,
+		ty: wgpu::BindingType::Buffer {
+			ty: wgpu::BufferBindingType::Uniform,
+			has_dynamic_offset: false,
+			min_binding_size: None,
+		},
+		count: None,
+	};
+
+	let object_bind_group_layout =
+		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			entries: &[
+				light_direction_bind_group_layout_entry,
+				aspect_ratio_bind_group_layout_entry,
+				position_bind_group_layout_entry,
+				angle_bind_group_layout_entry,
+				scale_bind_group_layout_entry,
+			],
+			label: Some("Object Bind Group Layout"),
+		});
+	let object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+		layout: &object_bind_group_layout,
+		entries: &[
+			wgpu::BindGroupEntry {
+				binding: light_direction_binding,
+				resource: light_direction_buffer.as_entire_binding(),
+			},
+			wgpu::BindGroupEntry {
+				binding: aspect_ratio_binding,
+				resource: aspect_ratio_buffer.as_entire_binding(),
+			},
+			wgpu::BindGroupEntry {
+				binding: position_binding,
+				resource: position_buffer.as_entire_binding(),
+			},
+			wgpu::BindGroupEntry {
+				binding: angle_binding,
+				resource: angle_buffer.as_entire_binding(),
+			},
+			wgpu::BindGroupEntry {
+				binding: scale_binding,
+				resource: scale_buffer.as_entire_binding(),
+			},
+		],
+		label: Some("Object Bind Group"),
+	});
 
 	let object_render_pipeline = {
 		let object_vertex_buffer_layout = wgpu::VertexBufferLayout {
@@ -219,10 +298,7 @@ pub fn run() {
 		let object_render_pipeline_layout =
 			device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 				label: Some("Object Render Pipeline Layout"),
-				bind_group_layouts: &[
-					&light_direction_bind_group_layout,
-					&aspect_ratio_bind_group_layout,
-				],
+				bind_group_layouts: &[&object_bind_group_layout],
 				push_constant_ranges: &[],
 			});
 		device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -267,7 +343,24 @@ pub fn run() {
 		})
 	};
 
-	let test_object_vertices = vec![
+	struct Object {
+		position: cgmath::Vector2<f32>,
+		angle: f32,
+		scale: f32,
+	}
+	let mut obstacle_objects = Vec::new();
+	for _i in 0..100 {
+		obstacle_objects.push(Object {
+			position: cgmath::Vector2 {
+				x: rand::thread_rng().gen_range(-1.0..1.0),
+				y: rand::thread_rng().gen_range(-1.0..1.0),
+			},
+			angle: rand::thread_rng().gen_range(0.0..TAU),
+			scale: rand::thread_rng().gen_range(0.05..0.1),
+		});
+	}
+
+	let triangle_mesh = vec![
 		ObjectVertexPod {
 			position: [0.0, 0.0, 0.0],
 			color: [1.0, 0.0, 0.0],
@@ -284,9 +377,9 @@ pub fn run() {
 			normal: [0.0, 0.0, 0.0],
 		},
 	];
-	let test_object_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Object Vertex Buffer"),
-		contents: bytemuck::cast_slice(&test_object_vertices),
+	let triangle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Triangle Vertex Buffer"),
+		contents: bytemuck::cast_slice(&triangle_mesh),
 		usage: wgpu::BufferUsages::VERTEX,
 	});
 
@@ -326,37 +419,80 @@ pub fn run() {
 			let window_texture_view = window_texture
 				.texture
 				.create_view(&wgpu::TextureViewDescriptor::default());
-			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-				label: Some("Render Encoder"),
-			});
-			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some("Render Pass"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &window_texture_view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.02, g: 0.0, b: 0.05, a: 1.0 }),
-						store: true,
-					},
-				})],
-				depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-					view: &z_buffer_view,
-					depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: true }),
-					stencil_ops: None,
-				}),
-			});
 
-			render_pass.set_pipeline(&object_render_pipeline);
-			render_pass.set_bind_group(0, &light_direction_bind_group, &[]);
-			render_pass.set_bind_group(1, &aspect_ratio_bind_group, &[]);
+			{
+				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					label: Some("Clear Render Encoder"),
+				});
+				let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: Some("Clear Render Pass"),
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: &window_texture_view,
+						resolve_target: None,
+						ops: wgpu::Operations {
+							load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.02, g: 0.0, b: 0.05, a: 1.0 }),
+							store: true,
+						},
+					})],
+					depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+						view: &z_buffer_view,
+						depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: true }),
+						stencil_ops: None,
+					}),
+				});
 
-			render_pass.set_vertex_buffer(0, test_object_vertex_buffer.slice(..));
-			render_pass.draw(0..(test_object_vertices.len() as u32), 0..1);
+				// Release `render_pass.parent` which is a ref mut to `encoder`.
+				drop(render_pass);
 
-			// Release `render_pass.parent` which is a ref mut to `encoder`.
-			drop(render_pass);
+				queue.submit(std::iter::once(encoder.finish()));
+			}
 
-			queue.submit(std::iter::once(encoder.finish()));
+			for obstacle_object in obstacle_objects.iter() {
+				queue.write_buffer(
+					&position_buffer,
+					0,
+					bytemuck::cast_slice(&[Vector2Pod { values: obstacle_object.position.into() }]),
+				);
+				queue.write_buffer(
+					&angle_buffer,
+					0,
+					bytemuck::cast_slice(&[obstacle_object.angle]),
+				);
+				queue.write_buffer(
+					&scale_buffer,
+					0,
+					bytemuck::cast_slice(&[obstacle_object.scale]),
+				);
+
+				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					label: Some("Object Render Encoder"),
+				});
+				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: Some("Object Render Pass"),
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: &window_texture_view,
+						resolve_target: None,
+						ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: true },
+					})],
+					depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+						view: &z_buffer_view,
+						depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: true }),
+						stencil_ops: None,
+					}),
+				});
+
+				render_pass.set_pipeline(&object_render_pipeline);
+				render_pass.set_bind_group(0, &object_bind_group, &[]);
+
+				render_pass.set_vertex_buffer(0, triangle_vertex_buffer.slice(..));
+				render_pass.draw(0..(triangle_mesh.len() as u32), 0..1);
+
+				// Release `render_pass.parent` which is a ref mut to `encoder`.
+				drop(render_pass);
+
+				queue.submit(std::iter::once(encoder.finish()));
+			}
+
 			window_texture.present();
 		},
 		_ => {},
