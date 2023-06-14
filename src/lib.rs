@@ -163,7 +163,7 @@ pub fn run() {
 		count: None,
 	};
 
-	let aspect_ratio = config.width as f32 / config.height as f32;
+	let mut aspect_ratio = config.width as f32 / config.height as f32;
 	let aspect_ratio_binding = 1;
 	let aspect_ratio_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Aspect Ratio Buffer"),
@@ -429,6 +429,8 @@ pub fn run() {
 		usage: wgpu::BufferUsages::VERTEX,
 	});
 
+	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
+
 	use winit::event::*;
 	event_loop.run(move |event, _, control_flow| match event {
 		Event::WindowEvent { ref event, window_id } if window_id == window.id() => match event {
@@ -449,7 +451,7 @@ pub fn run() {
 				config.height = height;
 				window_surface.configure(&device, &config);
 				z_buffer_view = make_z_buffer_texture_view(&device, z_buffer_format, width, height);
-				let aspect_ratio = config.width as f32 / config.height as f32;
+				aspect_ratio = config.width as f32 / config.height as f32;
 				queue.write_buffer(
 					&aspect_ratio_buffer,
 					0,
@@ -457,10 +459,21 @@ pub fn run() {
 				);
 			},
 
+			WindowEvent::CursorMoved { position, .. } => {
+				cursor_position.x = position.x as f32 / config.width as f32 * 2.0 - 1.0;
+				cursor_position.y =
+					(-position.y as f32 / config.height as f32 * 2.0 + 1.0) / aspect_ratio;
+			},
+
 			_ => {},
 		},
 
 		Event::MainEventsCleared => {
+			{
+				let ship = objects.get_mut(0).unwrap();
+				ship.position = cursor_position;
+			}
+
 			for object in objects.iter_mut() {
 				object.angle += object.angle_rotation;
 				object.position += object.motion;
