@@ -27,6 +27,7 @@ fn vertex_shader_main(vertex_input: VertexInput) -> VertexOutput {
 	vertex_output.screen_position.y = uniform_position.y + sin(new_angle) * len;
 
 	vertex_output.screen_position.y *= uniform_aspect_ratio;
+	vertex_output.screen_position.z = 1.0 - vertex_output.screen_position.z;
 
 	var shade = dot(vertex_input.normal, uniform_light_direction);
 	shade = clamp(shade, 0.0, 1.0);

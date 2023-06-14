@@ -360,28 +360,35 @@ pub fn run() {
 		});
 	}
 
-	let triangle_mesh = vec![
-		ObjectVertexPod {
-			position: [0.0, 0.0, 0.0],
+	let mut square_obstacle_mesh = Vec::new();
+	let mut add_triangle = |positions: [[f32; 3]; 3]| {
+		square_obstacle_mesh.push(ObjectVertexPod {
+			position: positions[0],
 			color: [1.0, 0.0, 0.0],
 			normal: [0.0, 0.0, 0.0],
-		},
-		ObjectVertexPod {
-			position: [1.0, 0.0, 0.0],
+		});
+		square_obstacle_mesh.push(ObjectVertexPod {
+			position: positions[1],
 			color: [0.0, 1.0, 0.0],
 			normal: [0.0, 0.0, 0.0],
-		},
-		ObjectVertexPod {
-			position: [0.0, 1.0, 0.0],
+		});
+		square_obstacle_mesh.push(ObjectVertexPod {
+			position: positions[2],
 			color: [0.0, 0.0, 1.0],
 			normal: [0.0, 0.0, 0.0],
-		},
-	];
-	let triangle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Triangle Vertex Buffer"),
-		contents: bytemuck::cast_slice(&triangle_mesh),
-		usage: wgpu::BufferUsages::VERTEX,
-	});
+		});
+	};
+	let center = [0.0, 0.0, 0.1];
+	add_triangle([center, [-1.0, -1.0, 0.0], [1.0, -1.0, 0.0]]);
+	add_triangle([center, [1.0, -1.0, 0.0], [1.0, 1.0, 0.0]]);
+	add_triangle([center, [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]);
+	add_triangle([center, [-1.0, 1.0, 0.0], [-1.0, -1.0, 0.0]]);
+	let square_obstacle_vertex_buffer =
+		device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some("Square Obstacle Vertex Buffer"),
+			contents: bytemuck::cast_slice(&square_obstacle_mesh),
+			usage: wgpu::BufferUsages::VERTEX,
+		});
 
 	use winit::event::*;
 	event_loop.run(move |event, _, control_flow| match event {
@@ -484,8 +491,8 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_bind_group, &[]);
 
-				render_pass.set_vertex_buffer(0, triangle_vertex_buffer.slice(..));
-				render_pass.draw(0..(triangle_mesh.len() as u32), 0..1);
+				render_pass.set_vertex_buffer(0, square_obstacle_vertex_buffer.slice(..));
+				render_pass.draw(0..(square_obstacle_mesh.len() as u32), 0..1);
 
 				// Release `render_pass.parent` which is a ref mut to `encoder`.
 				drop(render_pass);
