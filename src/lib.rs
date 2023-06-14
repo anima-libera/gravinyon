@@ -475,6 +475,14 @@ pub fn run() {
 				let ship_to_cursor = cursor_position - ship.position;
 				let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
 				ship.angle = ship_to_cursor_angle;
+
+				let ship_to_cursor_distance = ship_to_cursor.magnitude();
+				let mut force = ship_to_cursor.normalize() / ship_to_cursor_distance.powi(2);
+				force *= 0.00003;
+				if force.magnitude() > 0.0001 {
+					force = force.normalize() * 0.0001;
+				}
+				ship.motion += force;
 			}
 
 			for object in objects.iter_mut() {
