@@ -347,6 +347,7 @@ pub fn run() {
 		position: cgmath::Vector2<f32>,
 		angle: f32,
 		scale: f32,
+		angle_rotation: f32,
 	}
 	let mut obstacle_objects = Vec::new();
 	for _i in 0..100 {
@@ -356,7 +357,8 @@ pub fn run() {
 				y: rand::thread_rng().gen_range(-1.0..1.0),
 			},
 			angle: rand::thread_rng().gen_range(0.0..TAU),
-			scale: rand::thread_rng().gen_range(0.05..0.1),
+			scale: rand::thread_rng().gen_range(0.02..0.04),
+			angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
 		});
 	}
 
@@ -422,6 +424,10 @@ pub fn run() {
 		},
 
 		Event::MainEventsCleared => {
+			for obstacle_object in obstacle_objects.iter_mut() {
+				obstacle_object.angle += obstacle_object.angle_rotation;
+			}
+
 			let window_texture = window_surface.get_current_texture().unwrap();
 			let window_texture_view = window_texture
 				.texture
