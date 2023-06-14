@@ -1,6 +1,7 @@
 use std::f32::consts::TAU;
 
 use bytemuck::Zeroable;
+use cgmath::InnerSpace;
 use rand::Rng;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -148,7 +149,7 @@ pub fn run() {
 	let light_direction_binding = 0;
 	let light_direction_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Light Direction Buffer"),
-		contents: bytemuck::cast_slice(&[Vector3Pod::zeroed()]),
+		contents: bytemuck::cast_slice(&[Vector3Pod { values: [-1.0, 0.0, 0.0] }]),
 		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 	});
 	let light_direction_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
@@ -364,21 +365,15 @@ pub fn run() {
 
 	let mut square_obstacle_mesh = Vec::new();
 	let mut add_triangle = |positions: [[f32; 3]; 3]| {
-		square_obstacle_mesh.push(ObjectVertexPod {
-			position: positions[0],
-			color: [1.0, 0.0, 0.0],
-			normal: [0.0, 0.0, 0.0],
-		});
-		square_obstacle_mesh.push(ObjectVertexPod {
-			position: positions[1],
-			color: [0.0, 1.0, 0.0],
-			normal: [0.0, 0.0, 0.0],
-		});
-		square_obstacle_mesh.push(ObjectVertexPod {
-			position: positions[2],
-			color: [0.0, 0.0, 1.0],
-			normal: [0.0, 0.0, 0.0],
-		});
+		let a: cgmath::Vector3<f32> = positions[0].into();
+		let b: cgmath::Vector3<f32> = positions[1].into();
+		let c: cgmath::Vector3<f32> = positions[2].into();
+		let normal = (a - b).cross(c - b).normalize();
+		let normal: [f32; 3] = normal.into();
+		let color = [1.0, 1.0, 1.0];
+		square_obstacle_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
+		square_obstacle_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
+		square_obstacle_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
 	};
 	let center = [0.0, 0.0, 0.1];
 	add_triangle([center, [-1.0, -1.0, 0.0], [1.0, -1.0, 0.0]]);
