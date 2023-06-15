@@ -327,6 +327,7 @@ pub fn run() {
 	enum ObjectMesh {
 		SquareObstacle,
 		Ship,
+		Shot,
 	}
 	struct Object {
 		position: cgmath::Point2<f32>,
@@ -335,6 +336,7 @@ pub fn run() {
 		mesh: ObjectMesh,
 		motion: cgmath::Vector2<f32>,
 		angle_rotation: f32,
+		is_dead: bool,
 	}
 	let mut objects = Vec::new();
 	objects.push(Object {
@@ -344,6 +346,7 @@ pub fn run() {
 		mesh: ObjectMesh::Ship,
 		motion: (0.0, 0.0).into(),
 		angle_rotation: 0.0,
+		is_dead: false,
 	});
 	for _i in 0..30 {
 		objects.push(Object {
@@ -359,6 +362,7 @@ pub fn run() {
 				y: rand::thread_rng().gen_range(-0.001..0.001),
 			},
 			angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
+			is_dead: false,
 		});
 	}
 
@@ -369,7 +373,7 @@ pub fn run() {
 		let c: cgmath::Vector3<f32> = positions[2].into();
 		let normal = (a - b).cross(c - b).normalize();
 		let normal: [f32; 3] = normal.into();
-		let color = [1.0, 1.0, 1.0];
+		let color = [0.3, 0.3, 0.3];
 		square_obstacle_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
 		square_obstacle_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
 		square_obstacle_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
@@ -393,7 +397,7 @@ pub fn run() {
 		let c: cgmath::Vector3<f32> = positions[2].into();
 		let normal = (a - b).cross(c - b).normalize();
 		let normal: [f32; 3] = normal.into();
-		let color = [1.0, 0.6, 1.0];
+		let color = [0.5, 0.2, 0.5];
 		ship_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
 		ship_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
 		ship_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
@@ -406,6 +410,30 @@ pub fn run() {
 	let ship_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Ship Vertex Buffer"),
 		contents: bytemuck::cast_slice(&ship_mesh),
+		usage: wgpu::BufferUsages::VERTEX,
+	});
+
+	let mut shot_mesh = Vec::new();
+	let mut add_triangle = |positions: [[f32; 3]; 3]| {
+		let a: cgmath::Vector3<f32> = positions[0].into();
+		let b: cgmath::Vector3<f32> = positions[1].into();
+		let c: cgmath::Vector3<f32> = positions[2].into();
+		let normal = (a - b).cross(c - b).normalize();
+		let normal: [f32; 3] = normal.into();
+		let color = [1.0, 0.2, 0.0]; // The center has a different color.
+		shot_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
+		let color = [1.0, 0.0, 0.0];
+		shot_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
+		shot_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
+	};
+	let center = [0.0, 0.0, 0.0001];
+	add_triangle([center, [1.0, 0.0, 0.0], [0.0, 1.5, 0.0]]);
+	add_triangle([center, [0.0, -5.0, 0.0], [1.0, 0.0, 0.0]]);
+	add_triangle([center, [-1.0, 0.0, 0.0], [0.0, -5.0, 0.0]]);
+	add_triangle([center, [0.0, 1.5, 0.0], [-1.0, 0.0, 0.0]]);
+	let shot_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Shot Vertex Buffer"),
+		contents: bytemuck::cast_slice(&shot_mesh),
 		usage: wgpu::BufferUsages::VERTEX,
 	});
 
@@ -456,6 +484,26 @@ pub fn run() {
 				ship.motion += force;
 			},
 
+			WindowEvent::MouseInput {
+				button: MouseButton::Left,
+				state: ElementState::Pressed,
+				..
+			} => {
+				let ship = objects.get(0).unwrap();
+				let direction =
+					cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) };
+				let shot = Object {
+					position: ship.position + direction * 0.05,
+					angle: ship.angle,
+					scale: 0.01,
+					mesh: ObjectMesh::Shot,
+					motion: direction * 0.01,
+					angle_rotation: 0.0,
+					is_dead: false,
+				};
+				objects.push(shot);
+			},
+
 			_ => {},
 		},
 
@@ -475,20 +523,35 @@ pub fn run() {
 				ship.motion += force;
 			}
 
-			for object in objects.iter_mut() {
+			'object_loop: for object in objects.iter_mut() {
 				object.angle += object.angle_rotation;
 				object.position += object.motion;
-				if object.position.x <= -1.1 {
-					object.position.x = 1.1;
-				} else if object.position.x > 1.1 {
-					object.position.x = -1.1;
-				}
-				if object.position.y <= -1.1 {
-					object.position.y = 1.1;
-				} else if object.position.y > 1.1 {
-					object.position.y = -1.1;
+				match object.mesh {
+					ObjectMesh::SquareObstacle | ObjectMesh::Ship => {
+						if object.position.x <= -1.1 {
+							object.position.x = 1.1;
+						} else if object.position.x > 1.1 {
+							object.position.x = -1.1;
+						}
+						if object.position.y <= -1.1 {
+							object.position.y = 1.1;
+						} else if object.position.y > 1.1 {
+							object.position.y = -1.1;
+						}
+					},
+					ObjectMesh::Shot => {
+						if object.position.x <= -1.1
+							|| object.position.x > 1.1
+							|| object.position.y <= -1.1
+							|| object.position.y > 1.1
+						{
+							object.is_dead = true;
+							continue 'object_loop;
+						}
+					},
 				}
 			}
+			objects.retain(|object| !object.is_dead);
 
 			let window_texture = window_surface.get_current_texture().unwrap();
 			let window_texture_view = window_texture
@@ -523,7 +586,7 @@ pub fn run() {
 			}
 
 			for object in objects.iter() {
-				let angle = if object.mesh == ObjectMesh::Ship {
+				let angle = if object.mesh == ObjectMesh::Ship || object.mesh == ObjectMesh::Shot {
 					object.angle - TAU / 4.0
 				} else {
 					object.angle
@@ -569,6 +632,10 @@ pub fn run() {
 					ObjectMesh::Ship => {
 						render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
 						render_pass.draw(0..(ship_mesh.len() as u32), 0..1);
+					},
+					ObjectMesh::Shot => {
+						render_pass.set_vertex_buffer(0, shot_vertex_buffer.slice(..));
+						render_pass.draw(0..(shot_mesh.len() as u32), 0..1);
 					},
 				}
 

@@ -48,10 +48,9 @@ fn vertex_shader_main(vertex_input: VertexInput) -> VertexOutput {
 	vertex_output.screen_position.z = 1.0 - vertex_output.screen_position.z;
 
 	var shade = dot(normal, uniform_light_direction);
-	shade = f(shade * 8.0);
-	shade = 0.9 * shade + 0.1;
+	shade = f(shade * 4.0);
 
-	vertex_output.color = vec4<f32>(vertex_input.color * shade, 1.0);
+	vertex_output.color = vec4<f32>(vertex_input.color * (1.0 + shade * 3.0), 1.0);
 	return vertex_output;
 }
 
