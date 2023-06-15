@@ -443,36 +443,6 @@ pub fn run() {
 		}
 	}
 
-	let mut objects = Vec::new();
-	objects.push(Object {
-		position: (0.0, 0.0).into(),
-		angle: 0.0,
-		scale: 0.02,
-		mesh: ObjectMesh::Ship,
-		motion: (0.0, 0.0).into(),
-		angle_rotation: 0.0,
-		is_dead: false,
-		life: 1,
-	});
-	for _i in 0..30 {
-		objects.push(Object {
-			position: cgmath::Point2 {
-				x: rand::thread_rng().gen_range(-1.0..1.0),
-				y: rand::thread_rng().gen_range(-0.4..0.4),
-			},
-			angle: rand::thread_rng().gen_range(0.0..TAU),
-			scale: rand::thread_rng().gen_range(0.02..0.04),
-			mesh: ObjectMesh::Obstacle,
-			motion: cgmath::Vector2 {
-				x: rand::thread_rng().gen_range(-0.003..0.0001),
-				y: rand::thread_rng().gen_range(-0.001..0.001),
-			},
-			angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
-			is_dead: false,
-			life: 21,
-		});
-	}
-
 	#[derive(PartialEq, Eq)]
 	enum ObjectMesh {
 		Obstacle,
@@ -588,11 +558,45 @@ pub fn run() {
 			usage: wgpu::BufferUsages::VERTEX,
 		});
 
+	let init_objects = |objects: &mut Vec<Object>| {
+		*objects = Vec::new();
+		objects.push(Object {
+			position: (0.0, 0.0).into(),
+			angle: 0.0,
+			scale: 0.02,
+			mesh: ObjectMesh::Ship,
+			motion: (0.0, 0.0).into(),
+			angle_rotation: 0.0,
+			is_dead: false,
+			life: 1,
+		});
+		for _i in 0..5 {
+			objects.push(Object {
+				position: cgmath::Point2 { x: 1.05, y: rand::thread_rng().gen_range(-0.4..0.4) },
+				angle: rand::thread_rng().gen_range(0.0..TAU),
+				scale: rand::thread_rng().gen_range(0.02..0.04),
+				mesh: ObjectMesh::Obstacle,
+				motion: cgmath::Vector2 {
+					x: rand::thread_rng().gen_range(-0.003..0.0005),
+					y: rand::thread_rng().gen_range(-0.001..0.001),
+				},
+				angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
+				is_dead: false,
+				life: 21,
+			});
+		}
+	};
+	let mut objects = Vec::new();
+	init_objects(&mut objects);
+
 	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
 
 	let mut shooting = false;
 	let mut shooting_delay = 0;
 	let shooting_delay_max = 13;
+
+	let mut game_over = false;
+	let mut score = 0;
 
 	use winit::event::*;
 	event_loop.run(move |event, _, control_flow| match event {
@@ -606,7 +610,10 @@ pub fn run() {
 						..
 					},
 				..
-			} => *control_flow = ControlFlow::Exit,
+			} => {
+				println!("Window closed  Score: {score}");
+				*control_flow = ControlFlow::Exit
+			},
 
 			WindowEvent::Resized(new_size) => {
 				let winit::dpi::PhysicalSize { width, height } = *new_size;
@@ -637,149 +644,194 @@ pub fn run() {
 				button: MouseButton::Right,
 				state: ElementState::Pressed,
 				..
-			} => {
+			} if !game_over => {
 				let ship = objects.get_mut(0).unwrap();
 				let force =
 					cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) } * 0.003;
 				ship.motion += force;
 			},
 
-			WindowEvent::MouseInput { button: MouseButton::Left, state, .. } => {
+			WindowEvent::MouseInput { button: MouseButton::Left, state, .. } if !game_over => {
 				shooting = state == &ElementState::Pressed;
+			},
+
+			WindowEvent::MouseInput {
+				button: MouseButton::Left,
+				state: ElementState::Pressed,
+				..
+			} if game_over => {
+				game_over = false;
+				score = 0;
+				init_objects(&mut objects);
 			},
 
 			_ => {},
 		},
 
 		Event::MainEventsCleared => {
-			{
-				let ship = objects.get_mut(0).unwrap();
-				let ship_to_cursor = cursor_position - ship.position;
-				let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
-				ship.angle = ship_to_cursor_angle;
+			if !game_over {
+				{
+					let ship = objects.get_mut(0).unwrap();
+					let ship_to_cursor = cursor_position - ship.position;
+					let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+					ship.angle = ship_to_cursor_angle;
 
-				let ship_to_cursor_distance = ship_to_cursor.magnitude();
-				let mut force = ship_to_cursor.normalize() / ship_to_cursor_distance.powi(2);
-				force *= 0.000025;
-				if force.magnitude() > 0.0001 {
-					force = force.normalize() * 0.0001;
+					let ship_to_cursor_distance = ship_to_cursor.magnitude();
+					let mut force = ship_to_cursor.normalize() / ship_to_cursor_distance.powi(2);
+					force *= 0.000025;
+					if force.magnitude() > 0.0001 {
+						force = force.normalize() * 0.0001;
+					}
+					ship.motion += force;
 				}
-				ship.motion += force;
-			}
 
-			if 0 <= shooting_delay {
-				shooting_delay -= 1;
-			}
-			if shooting && shooting_delay <= 0 {
-				let ship = objects.get(0).unwrap();
-				let ship_position = ship.position;
-				let ship_direction =
-					cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) };
-				let ship_direction_left = cgmath::Vector2::<f32> {
-					x: f32::cos(ship.angle + TAU / 4.0),
-					y: f32::sin(ship.angle + TAU / 4.0),
-				};
-				for i in 0..2 {
-					let position = ship_position
-						+ ship_direction * 0.035
-						+ ship_direction_left * 0.016 * ((i * 2 - 1) as f32);
-					let position_to_cursor = (cursor_position - position).normalize();
-					let position_to_cursor_angle =
-						f32::atan2(position_to_cursor.y, position_to_cursor.x);
-					let shot = Object {
-						position,
-						angle: position_to_cursor_angle,
-						scale: 0.01,
-						mesh: ObjectMesh::Shot,
-						motion: position_to_cursor * 0.015,
-						angle_rotation: 0.0,
-						is_dead: false,
-						life: 1,
+				if 0 <= shooting_delay {
+					shooting_delay -= 1;
+				}
+				if shooting && shooting_delay <= 0 {
+					let ship = objects.get(0).unwrap();
+					let ship_position = ship.position;
+					let ship_direction =
+						cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) };
+					let ship_direction_left = cgmath::Vector2::<f32> {
+						x: f32::cos(ship.angle + TAU / 4.0),
+						y: f32::sin(ship.angle + TAU / 4.0),
 					};
-					objects.push(shot);
-				}
-				shooting_delay = shooting_delay_max;
-			}
-
-			'object_loop: for object_index in 0..objects.len() {
-				let object = objects.get(object_index).unwrap();
-				let mut die = false;
-				let mut damage = 0;
-				'object_pairs_loop: for other_object_index in 0..objects.len() {
-					if object_index == other_object_index {
-						continue 'object_pairs_loop;
+					for i in 0..2 {
+						let position = ship_position
+							+ ship_direction * 0.035
+							+ ship_direction_left * 0.016 * ((i * 2 - 1) as f32);
+						let position_to_cursor = (cursor_position - position).normalize();
+						let position_to_cursor_angle =
+							f32::atan2(position_to_cursor.y, position_to_cursor.x);
+						let shot = Object {
+							position,
+							angle: position_to_cursor_angle,
+							scale: 0.01,
+							mesh: ObjectMesh::Shot,
+							motion: position_to_cursor * 0.015,
+							angle_rotation: 0.0,
+							is_dead: false,
+							life: 1,
+						};
+						objects.push(shot);
 					}
-					let other_object = objects.get(other_object_index).unwrap();
-					if object.mesh == ObjectMesh::Shot
-						&& other_object.mesh == ObjectMesh::Obstacle
-						&& object.collide_with(other_object)
-					{
-						die = true;
-					} else if object.mesh == ObjectMesh::Obstacle
-						&& other_object.mesh == ObjectMesh::Shot
-						&& object.collide_with(other_object)
-					{
-						damage += 1;
-					}
+					shooting_delay = shooting_delay_max;
 				}
 
-				let mut object = objects.get_mut(object_index).unwrap();
+				let mut spawn_event = false;
 
-				object.life = object.life.saturating_sub(damage);
-
-				if die || object.life == 0 {
-					object.is_dead = true;
-				}
-				if object.is_dead {
-					continue 'object_loop;
-				}
-
-				object.angle += object.angle_rotation;
-				object.position += object.motion;
-				match object.mesh {
-					ObjectMesh::Obstacle => {
-						if object.position.x <= -1.1 {
-							object.position.x = 1.1;
-						} else if object.position.x > 1.1 {
-							object.position.x = -1.1;
+				'object_loop: for object_index in 0..objects.len() {
+					let object = objects.get(object_index).unwrap();
+					let mut die = false;
+					let mut damage = 0;
+					'object_pairs_loop: for other_object_index in 0..objects.len() {
+						if object_index == other_object_index {
+							continue 'object_pairs_loop;
 						}
-						if object.position.y < -0.5 + object.scale {
-							object.position.y = -0.5 + object.scale;
-							object.motion.y = f32::abs(object.motion.y);
-						} else if object.position.y > 0.5 - object.scale {
-							object.position.y = 0.5 - object.scale;
-							object.motion.y = -f32::abs(object.motion.y);
-						}
-					},
-					ObjectMesh::Ship => {
-						if object.position.x <= -1.1 {
-							object.position.x = 1.1;
-						} else if object.position.x > 1.1 {
-							object.position.x = -1.1;
-						}
-						if object.position.y < -0.5 + object.scale {
-							object.position.y = -0.5 + object.scale;
-							object.motion.y = f32::abs(object.motion.y);
-							object.motion *= 0.95;
-						} else if object.position.y > 0.5 - object.scale {
-							object.position.y = 0.5 - object.scale;
-							object.motion.y = -f32::abs(object.motion.y);
-							object.motion *= 0.95;
-						}
-					},
-					ObjectMesh::Shot => {
-						if object.position.x <= -1.1
-							|| object.position.x > 1.1
-							|| object.position.y <= -0.6
-							|| object.position.y > 0.6
+						let other_object = objects.get(other_object_index).unwrap();
+						if object.mesh == ObjectMesh::Shot
+							&& other_object.mesh == ObjectMesh::Obstacle
+							&& object.collide_with(other_object)
 						{
-							object.is_dead = true;
-							continue 'object_loop;
+							die = true;
+						} else if object.mesh == ObjectMesh::Obstacle
+							&& other_object.mesh == ObjectMesh::Shot
+							&& object.collide_with(other_object)
+						{
+							damage += 1;
+						} else if object.mesh == ObjectMesh::Ship
+							&& other_object.mesh == ObjectMesh::Obstacle
+							&& object.collide_with(other_object)
+						{
+							game_over = true;
+							println!("Game over >w<  Score: {score}");
 						}
-					},
+					}
+
+					let mut object = objects.get_mut(object_index).unwrap();
+
+					object.life = object.life.saturating_sub(damage);
+
+					if die || object.life == 0 {
+						object.is_dead = true;
+					}
+					if object.is_dead && object.mesh == ObjectMesh::Obstacle {
+						score += 1;
+						spawn_event = true;
+					}
+					if object.is_dead {
+						continue 'object_loop;
+					}
+
+					object.angle += object.angle_rotation;
+					object.position += object.motion;
+					match object.mesh {
+						ObjectMesh::Obstacle => {
+							if object.position.x <= -1.1 {
+								object.position.x = 1.1;
+							} else if object.position.x > 1.1 {
+								object.position.x = -1.1;
+							}
+							if object.position.y < -0.5 + object.scale {
+								object.position.y = -0.5 + object.scale;
+								object.motion.y = f32::abs(object.motion.y);
+							} else if object.position.y > 0.5 - object.scale {
+								object.position.y = 0.5 - object.scale;
+								object.motion.y = -f32::abs(object.motion.y);
+							}
+						},
+						ObjectMesh::Ship => {
+							if object.position.x <= -1.1 {
+								object.position.x = 1.1;
+							} else if object.position.x > 1.1 {
+								object.position.x = -1.1;
+							}
+							if object.position.y < -0.5 + object.scale {
+								object.position.y = -0.5 + object.scale;
+								object.motion.y = f32::abs(object.motion.y);
+								object.motion *= 0.95;
+							} else if object.position.y > 0.5 - object.scale {
+								object.position.y = 0.5 - object.scale;
+								object.motion.y = -f32::abs(object.motion.y);
+								object.motion *= 0.95;
+							}
+						},
+						ObjectMesh::Shot => {
+							if object.position.x <= -1.1
+								|| object.position.x > 1.1
+								|| object.position.y <= -0.6
+								|| object.position.y > 0.6
+							{
+								object.is_dead = true;
+								continue 'object_loop;
+							}
+						},
+					}
+				}
+				objects.retain(|object| !object.is_dead);
+
+				if spawn_event {
+					for _i in 0..2 {
+						objects.push(Object {
+							position: cgmath::Point2 {
+								x: 1.05,
+								y: rand::thread_rng().gen_range(-0.4..0.4),
+							},
+							angle: rand::thread_rng().gen_range(0.0..TAU),
+							scale: rand::thread_rng().gen_range(0.02..0.04),
+							mesh: ObjectMesh::Obstacle,
+							motion: cgmath::Vector2 {
+								x: rand::thread_rng().gen_range(-0.003..0.0005),
+								y: rand::thread_rng().gen_range(-0.001..0.001),
+							},
+							angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
+							is_dead: false,
+							life: 21,
+						});
+					}
 				}
 			}
-			objects.retain(|object| !object.is_dead);
 
 			let window_texture = window_surface.get_current_texture().unwrap();
 			let window_texture_view = window_texture
@@ -912,6 +964,7 @@ pub fn run() {
 
 			window_texture.present();
 		},
+
 		_ => {},
 	});
 }
