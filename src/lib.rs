@@ -20,6 +20,16 @@ struct ObjectVertexPod {
 	normal: [f32; 3],
 }
 
+/// Vertex type used in shape meshes.
+#[derive(Copy, Clone, Debug)]
+/// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+struct ShapeVertexPod {
+	position: [f32; 3],
+	color: [f32; 3],
+}
+
 /// Vector in 3D.
 #[derive(Copy, Clone, Debug)]
 /// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
@@ -185,7 +195,7 @@ pub fn run() {
 		}
 	}
 
-	let light_direction_uniform = UniformStuff::new(
+	let object_shader_uniform_light_direction = UniformStuff::new(
 		&device,
 		"Light Direction",
 		0,
@@ -193,7 +203,7 @@ pub fn run() {
 		wgpu::ShaderStages::VERTEX,
 		bytemuck::cast_slice(&[Vector3Pod { values: [-1.0, 0.0, 0.0] }]),
 	);
-	let aspect_ratio_uniform = UniformStuff::new(
+	let object_shader_uniform_aspect_ratio = UniformStuff::new(
 		&device,
 		"Aspect Ratio",
 		1,
@@ -201,7 +211,7 @@ pub fn run() {
 		wgpu::ShaderStages::VERTEX,
 		bytemuck::cast_slice(&[aspect_ratio]),
 	);
-	let position_uniform = UniformStuff::new(
+	let object_shader_uniform_position = UniformStuff::new(
 		&device,
 		"Position",
 		2,
@@ -209,7 +219,7 @@ pub fn run() {
 		wgpu::ShaderStages::VERTEX,
 		bytemuck::cast_slice(&[Vector2Pod::zeroed()]),
 	);
-	let angle_uniform = UniformStuff::new(
+	let object_shader_uniform_angle = UniformStuff::new(
 		&device,
 		"Angle",
 		3,
@@ -217,7 +227,7 @@ pub fn run() {
 		wgpu::ShaderStages::VERTEX,
 		bytemuck::cast_slice(&[f32::zeroed()]),
 	);
-	let scale_uniform = UniformStuff::new(
+	let object_shader_uniform_scale = UniformStuff::new(
 		&device,
 		"Scale",
 		4,
@@ -226,25 +236,25 @@ pub fn run() {
 		bytemuck::cast_slice(&[f32::zeroed()]),
 	);
 
-	let object_bind_group_layout =
+	let object_shader_bind_group_layout =
 		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			entries: &[
-				light_direction_uniform.bind_group_layout_entry,
-				aspect_ratio_uniform.bind_group_layout_entry,
-				position_uniform.bind_group_layout_entry,
-				angle_uniform.bind_group_layout_entry,
-				scale_uniform.bind_group_layout_entry,
+				object_shader_uniform_light_direction.bind_group_layout_entry,
+				object_shader_uniform_aspect_ratio.bind_group_layout_entry,
+				object_shader_uniform_position.bind_group_layout_entry,
+				object_shader_uniform_angle.bind_group_layout_entry,
+				object_shader_uniform_scale.bind_group_layout_entry,
 			],
 			label: Some("Object Bind Group Layout"),
 		});
-	let object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-		layout: &object_bind_group_layout,
+	let object_shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+		layout: &object_shader_bind_group_layout,
 		entries: &[
-			light_direction_uniform.bind_group_entry(),
-			aspect_ratio_uniform.bind_group_entry(),
-			position_uniform.bind_group_entry(),
-			angle_uniform.bind_group_entry(),
-			scale_uniform.bind_group_entry(),
+			object_shader_uniform_light_direction.bind_group_entry(),
+			object_shader_uniform_aspect_ratio.bind_group_entry(),
+			object_shader_uniform_position.bind_group_entry(),
+			object_shader_uniform_angle.bind_group_entry(),
+			object_shader_uniform_scale.bind_group_entry(),
 		],
 		label: Some("Object Bind Group"),
 	});
@@ -278,7 +288,7 @@ pub fn run() {
 		let object_render_pipeline_layout =
 			device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 				label: Some("Object Render Pipeline Layout"),
-				bind_group_layouts: &[&object_bind_group_layout],
+				bind_group_layouts: &[&object_shader_bind_group_layout],
 				push_constant_ranges: &[],
 			});
 		device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -303,6 +313,95 @@ pub fn run() {
 				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
 				cull_mode: Some(wgpu::Face::Back),
+				polygon_mode: wgpu::PolygonMode::Fill,
+				unclipped_depth: false,
+				conservative: false,
+			},
+			depth_stencil: Some(wgpu::DepthStencilState {
+				format: z_buffer_format,
+				depth_write_enabled: true,
+				depth_compare: wgpu::CompareFunction::Less,
+				stencil: wgpu::StencilState::default(),
+				bias: wgpu::DepthBiasState::default(),
+			}),
+			multisample: wgpu::MultisampleState {
+				count: 1,
+				mask: !0,
+				alpha_to_coverage_enabled: false,
+			},
+			multiview: None,
+		})
+	};
+
+	let shape_shader_uniform_aspect_ratio = UniformStuff::new(
+		&device,
+		"Aspect Ratio",
+		0,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[aspect_ratio]),
+	);
+
+	let shape_shader_bind_group_layout =
+		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			entries: &[shape_shader_uniform_aspect_ratio.bind_group_layout_entry],
+			label: Some("Shape Bind Group Layout"),
+		});
+	let shape_shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+		layout: &shape_shader_bind_group_layout,
+		entries: &[shape_shader_uniform_aspect_ratio.bind_group_entry()],
+		label: Some("Shape Bind Group"),
+	});
+
+	let shape_render_pipeline = {
+		let shape_vertex_buffer_layout = wgpu::VertexBufferLayout {
+			array_stride: std::mem::size_of::<ShapeVertexPod>() as wgpu::BufferAddress,
+			step_mode: wgpu::VertexStepMode::Vertex,
+			attributes: &[
+				wgpu::VertexAttribute {
+					offset: 0,
+					shader_location: 0,
+					format: wgpu::VertexFormat::Float32x3,
+				},
+				wgpu::VertexAttribute {
+					offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+					shader_location: 1,
+					format: wgpu::VertexFormat::Float32x3,
+				},
+			],
+		};
+		let shape_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("Shape Shader"),
+			source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shape.wgsl").into()),
+		});
+		let shape_render_pipeline_layout =
+			device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+				label: Some("Shape Render Pipeline Layout"),
+				bind_group_layouts: &[&shape_shader_bind_group_layout],
+				push_constant_ranges: &[],
+			});
+		device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("Shape Render Pipeline"),
+			layout: Some(&shape_render_pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &shape_shader,
+				entry_point: "vertex_shader_main",
+				buffers: &[shape_vertex_buffer_layout],
+			},
+			fragment: Some(wgpu::FragmentState {
+				module: &shape_shader,
+				entry_point: "fragment_shader_main",
+				targets: &[Some(wgpu::ColorTargetState {
+					format: config.format,
+					blend: Some(wgpu::BlendState::REPLACE),
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			primitive: wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList,
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: None, //Some(wgpu::Face::Back),
 				polygon_mode: wgpu::PolygonMode::Fill,
 				unclipped_depth: false,
 				conservative: false,
@@ -454,6 +553,38 @@ pub fn run() {
 		usage: wgpu::BufferUsages::VERTEX,
 	});
 
+	let color = [0.0, 0.0, 0.0];
+	let top_black_rectangle_mesh = vec![
+		ShapeVertexPod { position: [-1.0, 1.0, 0.0], color },
+		ShapeVertexPod { position: [1.0, 1.0, 0.0], color },
+		ShapeVertexPod { position: [-1.0, 0.5, 0.0], color },
+		ShapeVertexPod { position: [-1.0, 0.5, 0.0], color },
+		ShapeVertexPod { position: [1.0, 1.0, 0.0], color },
+		ShapeVertexPod { position: [1.0, 0.5, 0.0], color },
+	];
+	let top_black_rectangle_vertex_buffer =
+		device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some("Top Black Rectangle Vertex Buffer"),
+			contents: bytemuck::cast_slice(&top_black_rectangle_mesh),
+			usage: wgpu::BufferUsages::VERTEX,
+		});
+
+	let color = [0.0, 0.0, 0.0];
+	let bottom_black_rectangle_mesh = vec![
+		ShapeVertexPod { position: [-1.0, -1.0, 0.0], color },
+		ShapeVertexPod { position: [1.0, -1.0, 0.0], color },
+		ShapeVertexPod { position: [-1.0, -0.5, 0.0], color },
+		ShapeVertexPod { position: [-1.0, -0.5, 0.0], color },
+		ShapeVertexPod { position: [1.0, -1.0, 0.0], color },
+		ShapeVertexPod { position: [1.0, -0.5, 0.0], color },
+	];
+	let bottom_black_rectangle_vertex_buffer =
+		device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some("Bottom Black Rectangle Vertex Buffer"),
+			contents: bytemuck::cast_slice(&bottom_black_rectangle_mesh),
+			usage: wgpu::BufferUsages::VERTEX,
+		});
+
 	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
 
 	let mut shooting = false;
@@ -482,7 +613,12 @@ pub fn run() {
 				z_buffer_view = make_z_buffer_texture_view(&device, z_buffer_format, width, height);
 				aspect_ratio = config.width as f32 / config.height as f32;
 				queue.write_buffer(
-					&aspect_ratio_uniform.buffer,
+					&object_shader_uniform_aspect_ratio.buffer,
+					0,
+					bytemuck::cast_slice(&[aspect_ratio]),
+				);
+				queue.write_buffer(
+					&shape_shader_uniform_aspect_ratio.buffer,
 					0,
 					bytemuck::cast_slice(&[aspect_ratio]),
 				);
@@ -653,22 +789,26 @@ pub fn run() {
 				};
 
 				queue.write_buffer(
-					&position_uniform.buffer,
+					&object_shader_uniform_position.buffer,
 					0,
 					bytemuck::cast_slice(&[Vector2Pod { values: object.position.into() }]),
 				);
-				queue.write_buffer(&angle_uniform.buffer, 0, bytemuck::cast_slice(&[angle]));
 				queue.write_buffer(
-					&scale_uniform.buffer,
+					&object_shader_uniform_angle.buffer,
+					0,
+					bytemuck::cast_slice(&[angle]),
+				);
+				queue.write_buffer(
+					&object_shader_uniform_scale.buffer,
 					0,
 					bytemuck::cast_slice(&[object.scale]),
 				);
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-					label: Some("Object Render Encoder"),
+					label: Some("Render Encoder"),
 				});
 				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-					label: Some("Object Render Pass"),
+					label: Some("Render Pass"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 						view: &window_texture_view,
 						resolve_target: None,
@@ -682,7 +822,7 @@ pub fn run() {
 				});
 
 				render_pass.set_pipeline(&object_render_pipeline);
-				render_pass.set_bind_group(0, &object_bind_group, &[]);
+				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
 
 				match object.mesh {
 					ObjectMesh::Obstacle => {
@@ -698,6 +838,39 @@ pub fn run() {
 						render_pass.draw(0..(shot_mesh.len() as u32), 0..1);
 					},
 				}
+
+				// Release `render_pass.parent` which is a ref mut to `encoder`.
+				drop(render_pass);
+
+				queue.submit(std::iter::once(encoder.finish()));
+			}
+
+			{
+				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					label: Some("Render Encoder"),
+				});
+				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: Some("Render Pass"),
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: &window_texture_view,
+						resolve_target: None,
+						ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: true },
+					})],
+					depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+						view: &z_buffer_view,
+						depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: true }),
+						stencil_ops: None,
+					}),
+				});
+
+				render_pass.set_pipeline(&shape_render_pipeline);
+				render_pass.set_bind_group(0, &shape_shader_bind_group, &[]);
+
+				render_pass.set_vertex_buffer(0, top_black_rectangle_vertex_buffer.slice(..));
+				render_pass.draw(0..(top_black_rectangle_mesh.len() as u32), 0..1);
+
+				render_pass.set_vertex_buffer(0, bottom_black_rectangle_vertex_buffer.slice(..));
+				render_pass.draw(0..(bottom_black_rectangle_mesh.len() as u32), 0..1);
 
 				// Release `render_pass.parent` which is a ref mut to `encoder`.
 				drop(render_pass);
