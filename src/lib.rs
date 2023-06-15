@@ -146,126 +146,105 @@ pub fn run() {
 	let mut z_buffer_view =
 		make_z_buffer_texture_view(&device, z_buffer_format, config.width, config.height);
 
-	let light_direction_binding = 0;
-	let light_direction_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Light Direction Buffer"),
-		contents: bytemuck::cast_slice(&[Vector3Pod { values: [-1.0, 0.0, 0.0] }]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let light_direction_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
-		binding: light_direction_binding,
-		visibility: wgpu::ShaderStages::VERTEX,
-		ty: wgpu::BindingType::Buffer {
-			ty: wgpu::BufferBindingType::Uniform,
-			has_dynamic_offset: false,
-			min_binding_size: None,
-		},
-		count: None,
-	};
-
 	let mut aspect_ratio = config.width as f32 / config.height as f32;
-	let aspect_ratio_binding = 1;
-	let aspect_ratio_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Aspect Ratio Buffer"),
-		contents: bytemuck::cast_slice(&[aspect_ratio]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let aspect_ratio_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
-		binding: aspect_ratio_binding,
-		visibility: wgpu::ShaderStages::VERTEX,
-		ty: wgpu::BindingType::Buffer {
-			ty: wgpu::BufferBindingType::Uniform,
-			has_dynamic_offset: false,
-			min_binding_size: None,
-		},
-		count: None,
-	};
 
-	let position_binding = 2;
-	let position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Position Buffer"),
-		contents: bytemuck::cast_slice(&[Vector2Pod::zeroed()]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let position_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
-		binding: position_binding,
-		visibility: wgpu::ShaderStages::VERTEX,
-		ty: wgpu::BindingType::Buffer {
-			ty: wgpu::BufferBindingType::Uniform,
-			has_dynamic_offset: false,
-			min_binding_size: None,
-		},
-		count: None,
-	};
+	struct UniformStuff {
+		binding: u32,
+		buffer: wgpu::Buffer,
+		bind_group_layout_entry: wgpu::BindGroupLayoutEntry,
+	}
+	impl UniformStuff {
+		fn new(
+			device: &wgpu::Device,
+			name: &str,
+			binding: u32,
+			usage: wgpu::BufferUsages,
+			visibility: wgpu::ShaderStages,
+			contents: &[u8],
+		) -> UniformStuff {
+			let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				label: Some(&format!("{name} Buffer")),
+				contents,
+				usage,
+			});
+			let bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
+				binding,
+				visibility,
+				ty: wgpu::BindingType::Buffer {
+					ty: wgpu::BufferBindingType::Uniform,
+					has_dynamic_offset: false,
+					min_binding_size: None,
+				},
+				count: None,
+			};
+			UniformStuff { binding, buffer, bind_group_layout_entry }
+		}
 
-	let angle_binding = 3;
-	let angle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Angle Buffer"),
-		contents: bytemuck::cast_slice(&[f32::zeroed()]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let angle_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
-		binding: angle_binding,
-		visibility: wgpu::ShaderStages::VERTEX,
-		ty: wgpu::BindingType::Buffer {
-			ty: wgpu::BufferBindingType::Uniform,
-			has_dynamic_offset: false,
-			min_binding_size: None,
-		},
-		count: None,
-	};
+		fn bind_group_entry(&self) -> wgpu::BindGroupEntry {
+			wgpu::BindGroupEntry { binding: self.binding, resource: self.buffer.as_entire_binding() }
+		}
+	}
 
-	let scale_binding = 4;
-	let scale_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-		label: Some("Scale Buffer"),
-		contents: bytemuck::cast_slice(&[f32::zeroed()]),
-		usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-	});
-	let scale_bind_group_layout_entry = wgpu::BindGroupLayoutEntry {
-		binding: scale_binding,
-		visibility: wgpu::ShaderStages::VERTEX,
-		ty: wgpu::BindingType::Buffer {
-			ty: wgpu::BufferBindingType::Uniform,
-			has_dynamic_offset: false,
-			min_binding_size: None,
-		},
-		count: None,
-	};
+	let light_direction_uniform = UniformStuff::new(
+		&device,
+		"Light Direction",
+		0,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[Vector3Pod { values: [-1.0, 0.0, 0.0] }]),
+	);
+	let aspect_ratio_uniform = UniformStuff::new(
+		&device,
+		"Aspect Ratio",
+		1,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[aspect_ratio]),
+	);
+	let position_uniform = UniformStuff::new(
+		&device,
+		"Position",
+		2,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[Vector2Pod::zeroed()]),
+	);
+	let angle_uniform = UniformStuff::new(
+		&device,
+		"Angle",
+		3,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[f32::zeroed()]),
+	);
+	let scale_uniform = UniformStuff::new(
+		&device,
+		"Scale",
+		4,
+		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		wgpu::ShaderStages::VERTEX,
+		bytemuck::cast_slice(&[f32::zeroed()]),
+	);
 
 	let object_bind_group_layout =
 		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			entries: &[
-				light_direction_bind_group_layout_entry,
-				aspect_ratio_bind_group_layout_entry,
-				position_bind_group_layout_entry,
-				angle_bind_group_layout_entry,
-				scale_bind_group_layout_entry,
+				light_direction_uniform.bind_group_layout_entry,
+				aspect_ratio_uniform.bind_group_layout_entry,
+				position_uniform.bind_group_layout_entry,
+				angle_uniform.bind_group_layout_entry,
+				scale_uniform.bind_group_layout_entry,
 			],
 			label: Some("Object Bind Group Layout"),
 		});
 	let object_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
 		layout: &object_bind_group_layout,
 		entries: &[
-			wgpu::BindGroupEntry {
-				binding: light_direction_binding,
-				resource: light_direction_buffer.as_entire_binding(),
-			},
-			wgpu::BindGroupEntry {
-				binding: aspect_ratio_binding,
-				resource: aspect_ratio_buffer.as_entire_binding(),
-			},
-			wgpu::BindGroupEntry {
-				binding: position_binding,
-				resource: position_buffer.as_entire_binding(),
-			},
-			wgpu::BindGroupEntry {
-				binding: angle_binding,
-				resource: angle_buffer.as_entire_binding(),
-			},
-			wgpu::BindGroupEntry {
-				binding: scale_binding,
-				resource: scale_buffer.as_entire_binding(),
-			},
+			light_direction_uniform.bind_group_entry(),
+			aspect_ratio_uniform.bind_group_entry(),
+			position_uniform.bind_group_entry(),
+			angle_uniform.bind_group_entry(),
+			scale_uniform.bind_group_entry(),
 		],
 		label: Some("Object Bind Group"),
 	});
@@ -454,7 +433,7 @@ pub fn run() {
 				z_buffer_view = make_z_buffer_texture_view(&device, z_buffer_format, width, height);
 				aspect_ratio = config.width as f32 / config.height as f32;
 				queue.write_buffer(
-					&aspect_ratio_buffer,
+					&aspect_ratio_uniform.buffer,
 					0,
 					bytemuck::cast_slice(&[aspect_ratio]),
 				);
@@ -551,12 +530,16 @@ pub fn run() {
 				};
 
 				queue.write_buffer(
-					&position_buffer,
+					&position_uniform.buffer,
 					0,
 					bytemuck::cast_slice(&[Vector2Pod { values: object.position.into() }]),
 				);
-				queue.write_buffer(&angle_buffer, 0, bytemuck::cast_slice(&[angle]));
-				queue.write_buffer(&scale_buffer, 0, bytemuck::cast_slice(&[object.scale]));
+				queue.write_buffer(&angle_uniform.buffer, 0, bytemuck::cast_slice(&[angle]));
+				queue.write_buffer(
+					&scale_uniform.buffer,
+					0,
+					bytemuck::cast_slice(&[object.scale]),
+				);
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 					label: Some("Object Render Encoder"),
