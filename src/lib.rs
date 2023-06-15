@@ -366,7 +366,7 @@ pub fn run() {
 		});
 	}
 
-	let mut square_obstacle_mesh = Vec::new();
+	let mut obstacle_mesh = Vec::new();
 	let mut add_triangle = |positions: [[f32; 3]; 3]| {
 		let a: cgmath::Vector3<f32> = positions[0].into();
 		let b: cgmath::Vector3<f32> = positions[1].into();
@@ -374,21 +374,26 @@ pub fn run() {
 		let normal = (a - b).cross(c - b).normalize();
 		let normal: [f32; 3] = normal.into();
 		let color = [0.3, 0.3, 0.3];
-		square_obstacle_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
-		square_obstacle_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
-		square_obstacle_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
+		obstacle_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
+		obstacle_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
+		obstacle_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
 	};
 	let center = [0.0, 0.0, 0.1];
-	add_triangle([center, [-1.0, -1.0, 0.0], [1.0, -1.0, 0.0]]);
-	add_triangle([center, [1.0, -1.0, 0.0], [1.0, 1.0, 0.0]]);
-	add_triangle([center, [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]);
-	add_triangle([center, [-1.0, 1.0, 0.0], [-1.0, -1.0, 0.0]]);
-	let square_obstacle_vertex_buffer =
-		device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some("Square Obstacle Vertex Buffer"),
-			contents: bytemuck::cast_slice(&square_obstacle_mesh),
-			usage: wgpu::BufferUsages::VERTEX,
-		});
+	let n = 5;
+	for i in 0..n {
+		let angle_i = i as f32 / n as f32 * TAU;
+		let angle_i_plus_1 = (i + 1) as f32 / n as f32 * TAU;
+		add_triangle([
+			center,
+			[f32::cos(angle_i), f32::sin(angle_i), 0.0],
+			[f32::cos(angle_i_plus_1), f32::sin(angle_i_plus_1), 0.0],
+		]);
+	}
+	let obstacle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Obstacle Vertex Buffer"),
+		contents: bytemuck::cast_slice(&obstacle_mesh),
+		usage: wgpu::BufferUsages::VERTEX,
+	});
 
 	let mut ship_mesh = Vec::new();
 	let mut add_triangle = |positions: [[f32; 3]; 3]| {
@@ -427,10 +432,10 @@ pub fn run() {
 		shot_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
 	};
 	let center = [0.0, 0.0, 0.0001];
-	add_triangle([center, [1.0, 0.0, 0.0], [0.0, 1.5, 0.0]]);
-	add_triangle([center, [0.0, -5.0, 0.0], [1.0, 0.0, 0.0]]);
-	add_triangle([center, [-1.0, 0.0, 0.0], [0.0, -5.0, 0.0]]);
-	add_triangle([center, [0.0, 1.5, 0.0], [-1.0, 0.0, 0.0]]);
+	add_triangle([center, [0.6, 0.0, 0.0], [0.0, 1.5, 0.0]]);
+	add_triangle([center, [0.0, -7.0, 0.0], [0.6, 0.0, 0.0]]);
+	add_triangle([center, [-0.6, 0.0, 0.0], [0.0, -7.0, 0.0]]);
+	add_triangle([center, [0.0, 1.5, 0.0], [-0.6, 0.0, 0.0]]);
 	let shot_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Shot Vertex Buffer"),
 		contents: bytemuck::cast_slice(&shot_mesh),
@@ -497,7 +502,7 @@ pub fn run() {
 					angle: ship.angle,
 					scale: 0.01,
 					mesh: ObjectMesh::Shot,
-					motion: direction * 0.01,
+					motion: direction * 0.015,
 					angle_rotation: 0.0,
 					is_dead: false,
 				};
@@ -626,8 +631,8 @@ pub fn run() {
 
 				match object.mesh {
 					ObjectMesh::SquareObstacle => {
-						render_pass.set_vertex_buffer(0, square_obstacle_vertex_buffer.slice(..));
-						render_pass.draw(0..(square_obstacle_mesh.len() as u32), 0..1);
+						render_pass.set_vertex_buffer(0, obstacle_vertex_buffer.slice(..));
+						render_pass.draw(0..(obstacle_mesh.len() as u32), 0..1);
 					},
 					ObjectMesh::Ship => {
 						render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
