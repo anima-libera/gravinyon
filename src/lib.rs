@@ -430,6 +430,7 @@ pub fn run() {
 		motion: cgmath::Vector2<f32>,
 		angle_rotation: f32,
 		is_dead: bool,
+		life: u32,
 	}
 
 	impl Object {
@@ -451,12 +452,13 @@ pub fn run() {
 		motion: (0.0, 0.0).into(),
 		angle_rotation: 0.0,
 		is_dead: false,
+		life: 1,
 	});
 	for _i in 0..30 {
 		objects.push(Object {
 			position: cgmath::Point2 {
 				x: rand::thread_rng().gen_range(-1.0..1.0),
-				y: rand::thread_rng().gen_range(-1.0..1.0),
+				y: rand::thread_rng().gen_range(-0.4..0.4),
 			},
 			angle: rand::thread_rng().gen_range(0.0..TAU),
 			scale: rand::thread_rng().gen_range(0.02..0.04),
@@ -467,6 +469,7 @@ pub fn run() {
 			},
 			angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
 			is_dead: false,
+			life: 21,
 		});
 	}
 
@@ -657,7 +660,7 @@ pub fn run() {
 
 				let ship_to_cursor_distance = ship_to_cursor.magnitude();
 				let mut force = ship_to_cursor.normalize() / ship_to_cursor_distance.powi(2);
-				force *= 0.00002;
+				force *= 0.000025;
 				if force.magnitude() > 0.0001 {
 					force = force.normalize() * 0.0001;
 				}
@@ -691,6 +694,7 @@ pub fn run() {
 						motion: position_to_cursor * 0.015,
 						angle_rotation: 0.0,
 						is_dead: false,
+						life: 1,
 					};
 					objects.push(shot);
 				}
@@ -700,6 +704,7 @@ pub fn run() {
 			'object_loop: for object_index in 0..objects.len() {
 				let object = objects.get(object_index).unwrap();
 				let mut die = false;
+				let mut damage = 0;
 				'object_pairs_loop: for other_object_index in 0..objects.len() {
 					if object_index == other_object_index {
 						continue 'object_pairs_loop;
@@ -710,36 +715,63 @@ pub fn run() {
 						&& object.collide_with(other_object)
 					{
 						die = true;
+					} else if object.mesh == ObjectMesh::Obstacle
+						&& other_object.mesh == ObjectMesh::Shot
+						&& object.collide_with(other_object)
+					{
+						damage += 1;
 					}
 				}
 
 				let mut object = objects.get_mut(object_index).unwrap();
 
-				if die {
+				object.life = object.life.saturating_sub(damage);
+
+				if die || object.life == 0 {
 					object.is_dead = true;
+				}
+				if object.is_dead {
 					continue 'object_loop;
 				}
 
 				object.angle += object.angle_rotation;
 				object.position += object.motion;
 				match object.mesh {
-					ObjectMesh::Obstacle | ObjectMesh::Ship => {
+					ObjectMesh::Obstacle => {
 						if object.position.x <= -1.1 {
 							object.position.x = 1.1;
 						} else if object.position.x > 1.1 {
 							object.position.x = -1.1;
 						}
-						if object.position.y <= -1.1 {
-							object.position.y = 1.1;
-						} else if object.position.y > 1.1 {
-							object.position.y = -1.1;
+						if object.position.y < -0.5 + object.scale {
+							object.position.y = -0.5 + object.scale;
+							object.motion.y = f32::abs(object.motion.y);
+						} else if object.position.y > 0.5 - object.scale {
+							object.position.y = 0.5 - object.scale;
+							object.motion.y = -f32::abs(object.motion.y);
+						}
+					},
+					ObjectMesh::Ship => {
+						if object.position.x <= -1.1 {
+							object.position.x = 1.1;
+						} else if object.position.x > 1.1 {
+							object.position.x = -1.1;
+						}
+						if object.position.y < -0.5 + object.scale {
+							object.position.y = -0.5 + object.scale;
+							object.motion.y = f32::abs(object.motion.y);
+							object.motion *= 0.95;
+						} else if object.position.y > 0.5 - object.scale {
+							object.position.y = 0.5 - object.scale;
+							object.motion.y = -f32::abs(object.motion.y);
+							object.motion *= 0.95;
 						}
 					},
 					ObjectMesh::Shot => {
 						if object.position.x <= -1.1
 							|| object.position.x > 1.1
-							|| object.position.y <= -1.1
-							|| object.position.y > 1.1
+							|| object.position.y <= -0.6
+							|| object.position.y > 0.6
 						{
 							object.is_dead = true;
 							continue 'object_loop;
