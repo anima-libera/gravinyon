@@ -422,32 +422,61 @@ pub fn run() {
 		})
 	};
 
-	struct Object {
-		position: cgmath::Point2<f32>,
-		angle: f32,
-		scale: f32,
-		mesh: ObjectMesh,
-		motion: cgmath::Vector2<f32>,
-		angle_rotation: f32,
-		is_dead: bool,
-		life: u32,
+	enum Object {
+		Ship {
+			position: cgmath::Point2<f32>,
+			motion: cgmath::Vector2<f32>,
+		},
+		Shot {
+			position: cgmath::Point2<f32>,
+			angle: f32,
+		},
+		Obstacle {
+			position: cgmath::Point2<f32>,
+			motion: cgmath::Vector2<f32>,
+			angle: f32,
+			angle_rotation: f32,
+			scale: f32,
+			life: u32,
+		},
 	}
 
 	impl Object {
+		fn is_ship(&self) -> bool {
+			matches!(self, Object::Ship { .. })
+		}
+		fn is_shot(&self) -> bool {
+			matches!(self, Object::Shot { .. })
+		}
+		fn is_obstacle(&self) -> bool {
+			matches!(self, Object::Obstacle { .. })
+		}
+
+		fn position(&self) -> cgmath::Point2<f32> {
+			match self {
+				Object::Ship { position, .. } => *position,
+				Object::Shot { position, .. } => *position,
+				Object::Obstacle { position, .. } => *position,
+			}
+		}
+
+		const SHIP_SCALE: f32 = 0.02;
+
+		fn scale(&self) -> f32 {
+			match self {
+				Object::Ship { .. } => Object::SHIP_SCALE,
+				Object::Shot { .. } => 0.01,
+				Object::Obstacle { scale, .. } => *scale,
+			}
+		}
+
 		fn collide_with(&self, other: &Object) -> bool {
 			// TODO: Make something serious that check for collision of triangles of the mesh projected
 			// onto the screen plane.
 
-			let distance = self.position.distance(other.position);
-			distance < self.scale + other.scale
+			let distance = self.position().distance(other.position());
+			distance < self.scale() + other.scale()
 		}
-	}
-
-	#[derive(PartialEq, Eq)]
-	enum ObjectMesh {
-		Obstacle,
-		Ship,
-		Shot,
 	}
 
 	let mut obstacle_mesh = Vec::new();
@@ -558,36 +587,30 @@ pub fn run() {
 			usage: wgpu::BufferUsages::VERTEX,
 		});
 
-	let init_objects = |objects: &mut Vec<Object>| {
-		*objects = Vec::new();
-		objects.push(Object {
-			position: (0.0, 0.0).into(),
-			angle: 0.0,
-			scale: 0.02,
-			mesh: ObjectMesh::Ship,
-			motion: (0.0, 0.0).into(),
-			angle_rotation: 0.0,
-			is_dead: false,
-			life: 1,
-		});
-		for _i in 0..5 {
-			objects.push(Object {
+	let spawn_obstacles = |objects: &mut Vec<Object>, how_many: usize| {
+		for _i in 0..how_many {
+			objects.push(Object::Obstacle {
 				position: cgmath::Point2 { x: 1.05, y: rand::thread_rng().gen_range(-0.4..0.4) },
 				angle: rand::thread_rng().gen_range(0.0..TAU),
 				scale: rand::thread_rng().gen_range(0.02..0.04),
-				mesh: ObjectMesh::Obstacle,
 				motion: cgmath::Vector2 {
 					x: rand::thread_rng().gen_range(-0.003..0.0005),
 					y: rand::thread_rng().gen_range(-0.001..0.001),
 				},
 				angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
-				is_dead: false,
 				life: 21,
 			});
 		}
 	};
+
+	let init_objects = |objects: &mut Vec<Object>,
+	                    spawn_obstacles: &dyn Fn(&mut Vec<Object>, usize)| {
+		*objects = Vec::new();
+		objects.push(Object::Ship { position: (0.0, 0.0).into(), motion: (0.0, 0.0).into() });
+		spawn_obstacles(objects, 5);
+	};
 	let mut objects = Vec::new();
-	init_objects(&mut objects);
+	init_objects(&mut objects, &spawn_obstacles);
 
 	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
 
@@ -645,10 +668,17 @@ pub fn run() {
 				state: ElementState::Pressed,
 				..
 			} if !game_over => {
-				let ship = objects.get_mut(0).unwrap();
-				let force =
-					cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) } * 0.003;
-				ship.motion += force;
+				if let Object::Ship { position, motion } = objects.get_mut(0).unwrap() {
+					let ship_to_cursor = cursor_position - *position;
+					let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+					let force = cgmath::Vector2::<f32> {
+						x: f32::cos(ship_to_cursor_angle),
+						y: f32::sin(ship_to_cursor_angle),
+					} * 0.003;
+					*motion += force;
+				} else {
+					panic!();
+				}
 			},
 
 			WindowEvent::MouseInput { button: MouseButton::Left, state, .. } if !game_over => {
@@ -662,7 +692,7 @@ pub fn run() {
 			} if game_over => {
 				game_over = false;
 				score = 0;
-				init_objects(&mut objects);
+				init_objects(&mut objects, &spawn_obstacles);
 			},
 
 			_ => {},
@@ -670,11 +700,8 @@ pub fn run() {
 
 		Event::MainEventsCleared => {
 			if !game_over {
-				{
-					let ship = objects.get_mut(0).unwrap();
-					let ship_to_cursor = cursor_position - ship.position;
-					let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
-					ship.angle = ship_to_cursor_angle;
+				if let Object::Ship { position, motion } = objects.get_mut(0).unwrap() {
+					let ship_to_cursor = cursor_position - *position;
 
 					let ship_to_cursor_distance = ship_to_cursor.magnitude();
 					let mut force = ship_to_cursor.normalize() / ship_to_cursor_distance.powi(2);
@@ -682,21 +709,32 @@ pub fn run() {
 					if force.magnitude() > 0.0001 {
 						force = force.normalize() * 0.0001;
 					}
-					ship.motion += force;
+					*motion += force;
+				} else {
+					panic!();
 				}
 
 				if 0 <= shooting_delay {
 					shooting_delay -= 1;
 				}
 				if shooting && shooting_delay <= 0 {
-					let ship = objects.get(0).unwrap();
-					let ship_position = ship.position;
-					let ship_direction =
-						cgmath::Vector2::<f32> { x: f32::cos(ship.angle), y: f32::sin(ship.angle) };
-					let ship_direction_left = cgmath::Vector2::<f32> {
-						x: f32::cos(ship.angle + TAU / 4.0),
-						y: f32::sin(ship.angle + TAU / 4.0),
-					};
+					let (ship_position, ship_direction, ship_direction_left) =
+						if let Object::Ship { position, .. } = objects.get(0).unwrap() {
+							let ship_to_cursor = cursor_position - *position;
+							let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+							let ship_position = *position;
+							let ship_direction = cgmath::Vector2::<f32> {
+								x: f32::cos(ship_to_cursor_angle),
+								y: f32::sin(ship_to_cursor_angle),
+							};
+							let ship_direction_left = cgmath::Vector2::<f32> {
+								x: f32::cos(ship_to_cursor_angle + TAU / 4.0),
+								y: f32::sin(ship_to_cursor_angle + TAU / 4.0),
+							};
+							(ship_position, ship_direction, ship_direction_left)
+						} else {
+							panic!();
+						};
 					for i in 0..2 {
 						let position = ship_position
 							+ ship_direction * 0.035
@@ -704,44 +742,39 @@ pub fn run() {
 						let position_to_cursor = (cursor_position - position).normalize();
 						let position_to_cursor_angle =
 							f32::atan2(position_to_cursor.y, position_to_cursor.x);
-						let shot = Object {
-							position,
-							angle: position_to_cursor_angle,
-							scale: 0.01,
-							mesh: ObjectMesh::Shot,
-							motion: position_to_cursor * 0.015,
-							angle_rotation: 0.0,
-							is_dead: false,
-							life: 1,
-						};
+						let shot = Object::Shot { position, angle: position_to_cursor_angle };
 						objects.push(shot);
 					}
 					shooting_delay = shooting_delay_max;
 				}
 
+				// Spawning more obstacles when one is taken down.
 				let mut spawn_event = false;
+
+				let mut dead_object_indices = Vec::new();
 
 				'object_loop: for object_index in 0..objects.len() {
 					let object = objects.get(object_index).unwrap();
-					let mut die = false;
-					let mut damage = 0;
+
+					let mut object_is_shot_and_dies = false;
+					let mut object_is_obstacle_and_takes_damage = 0;
 					'object_pairs_loop: for other_object_index in 0..objects.len() {
 						if object_index == other_object_index {
 							continue 'object_pairs_loop;
 						}
 						let other_object = objects.get(other_object_index).unwrap();
-						if object.mesh == ObjectMesh::Shot
-							&& other_object.mesh == ObjectMesh::Obstacle
+						if object.is_shot()
+							&& other_object.is_obstacle()
 							&& object.collide_with(other_object)
 						{
-							die = true;
-						} else if object.mesh == ObjectMesh::Obstacle
-							&& other_object.mesh == ObjectMesh::Shot
+							object_is_shot_and_dies = true;
+						} else if object.is_obstacle()
+							&& other_object.is_shot()
 							&& object.collide_with(other_object)
 						{
-							damage += 1;
-						} else if object.mesh == ObjectMesh::Ship
-							&& other_object.mesh == ObjectMesh::Obstacle
+							object_is_obstacle_and_takes_damage += 1;
+						} else if object.is_ship()
+							&& other_object.is_obstacle()
 							&& object.collide_with(other_object)
 						{
 							game_over = true;
@@ -749,87 +782,88 @@ pub fn run() {
 						}
 					}
 
-					let mut object = objects.get_mut(object_index).unwrap();
+					let object = objects.get_mut(object_index).unwrap();
 
-					object.life = object.life.saturating_sub(damage);
+					if object_is_obstacle_and_takes_damage > 0 {
+						if let Object::Obstacle { life, .. } = object {
+							*life = life.saturating_sub(object_is_obstacle_and_takes_damage);
+						} else {
+							panic!();
+						}
+					}
 
-					if die || object.life == 0 {
-						object.is_dead = true;
-					}
-					if object.is_dead && object.mesh == ObjectMesh::Obstacle {
-						score += 1;
-						spawn_event = true;
-					}
-					if object.is_dead {
+					if object_is_shot_and_dies
+						|| matches!(object, Object::Obstacle { life, .. } if *life == 0)
+					{
+						dead_object_indices.push(object_index);
+						if object.is_obstacle() {
+							score += 1;
+							spawn_event = true;
+						}
 						continue 'object_loop;
 					}
 
-					object.angle += object.angle_rotation;
-					object.position += object.motion;
-					match object.mesh {
-						ObjectMesh::Obstacle => {
-							if object.position.x <= -1.1 {
-								object.position.x = 1.1;
-							} else if object.position.x > 1.1 {
-								object.position.x = -1.1;
+					match object {
+						Object::Obstacle { position, motion, angle, angle_rotation, scale, .. } => {
+							*position += *motion;
+							*angle += *angle_rotation;
+
+							if position.x <= -1.1 {
+								position.x = 1.1;
+							} else if position.x > 1.1 {
+								position.x = -1.1;
 							}
-							if object.position.y < -0.5 + object.scale {
-								object.position.y = -0.5 + object.scale;
-								object.motion.y = f32::abs(object.motion.y);
-							} else if object.position.y > 0.5 - object.scale {
-								object.position.y = 0.5 - object.scale;
-								object.motion.y = -f32::abs(object.motion.y);
-							}
-						},
-						ObjectMesh::Ship => {
-							if object.position.x <= -1.1 {
-								object.position.x = 1.1;
-							} else if object.position.x > 1.1 {
-								object.position.x = -1.1;
-							}
-							if object.position.y < -0.5 + object.scale {
-								object.position.y = -0.5 + object.scale;
-								object.motion.y = f32::abs(object.motion.y);
-								object.motion *= 0.95;
-							} else if object.position.y > 0.5 - object.scale {
-								object.position.y = 0.5 - object.scale;
-								object.motion.y = -f32::abs(object.motion.y);
-								object.motion *= 0.95;
+							if position.y < -0.5 + *scale {
+								position.y = -0.5 + *scale;
+								motion.y = f32::abs(motion.y);
+							} else if position.y > 0.5 - *scale {
+								position.y = 0.5 - *scale;
+								motion.y = -f32::abs(motion.y);
 							}
 						},
-						ObjectMesh::Shot => {
-							if object.position.x <= -1.1
-								|| object.position.x > 1.1
-								|| object.position.y <= -0.6
-								|| object.position.y > 0.6
+
+						Object::Ship { position, motion } => {
+							*position += *motion;
+
+							if position.x <= -1.1 {
+								position.x = 1.1;
+							} else if position.x > 1.1 {
+								position.x = -1.1;
+							}
+							if position.y < -0.5 + Object::SHIP_SCALE {
+								position.y = -0.5 + Object::SHIP_SCALE;
+								motion.y = f32::abs(motion.y);
+								*motion *= 0.95;
+							} else if position.y > 0.5 - Object::SHIP_SCALE {
+								position.y = 0.5 - Object::SHIP_SCALE;
+								motion.y = -f32::abs(motion.y);
+								*motion *= 0.95;
+							}
+						},
+
+						Object::Shot { position, angle } => {
+							let motion =
+								cgmath::Vector2::<f32> { x: f32::cos(*angle), y: f32::sin(*angle) } * 0.015;
+							*position += motion;
+
+							if position.x <= -1.1
+								|| position.x > 1.1 || position.y <= -0.6
+								|| position.y > 0.6
 							{
-								object.is_dead = true;
+								dead_object_indices.push(object_index);
 								continue 'object_loop;
 							}
 						},
 					}
 				}
-				objects.retain(|object| !object.is_dead);
+
+				dead_object_indices.sort();
+				for dead_object_index in dead_object_indices.into_iter().rev() {
+					objects.remove(dead_object_index);
+				}
 
 				if spawn_event {
-					for _i in 0..2 {
-						objects.push(Object {
-							position: cgmath::Point2 {
-								x: 1.05,
-								y: rand::thread_rng().gen_range(-0.4..0.4),
-							},
-							angle: rand::thread_rng().gen_range(0.0..TAU),
-							scale: rand::thread_rng().gen_range(0.02..0.04),
-							mesh: ObjectMesh::Obstacle,
-							motion: cgmath::Vector2 {
-								x: rand::thread_rng().gen_range(-0.003..0.0005),
-								y: rand::thread_rng().gen_range(-0.001..0.001),
-							},
-							angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
-							is_dead: false,
-							life: 21,
-						});
-					}
+					spawn_obstacles(&mut objects, 2);
 				}
 			}
 
@@ -866,26 +900,34 @@ pub fn run() {
 			}
 
 			for object in objects.iter() {
-				let angle = if object.mesh == ObjectMesh::Ship || object.mesh == ObjectMesh::Shot {
-					object.angle - TAU / 4.0
-				} else {
-					object.angle
+				if object.is_ship() && game_over {
+					continue;
+				}
+
+				let mesh_angle = match object {
+					Object::Ship { position, .. } => {
+						let ship_to_cursor = cursor_position - *position;
+						let angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+						angle - TAU / 4.0
+					},
+					Object::Shot { angle, .. } => angle - TAU / 4.0,
+					Object::Obstacle { angle, .. } => *angle,
 				};
 
 				queue.write_buffer(
 					&object_shader_uniform_position.buffer,
 					0,
-					bytemuck::cast_slice(&[Vector2Pod { values: object.position.into() }]),
+					bytemuck::cast_slice(&[Vector2Pod { values: object.position().into() }]),
 				);
 				queue.write_buffer(
 					&object_shader_uniform_angle.buffer,
 					0,
-					bytemuck::cast_slice(&[angle]),
+					bytemuck::cast_slice(&[mesh_angle]),
 				);
 				queue.write_buffer(
 					&object_shader_uniform_scale.buffer,
 					0,
-					bytemuck::cast_slice(&[object.scale]),
+					bytemuck::cast_slice(&[object.scale()]),
 				);
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -908,16 +950,16 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
 
-				match object.mesh {
-					ObjectMesh::Obstacle => {
+				match object {
+					Object::Obstacle { .. } => {
 						render_pass.set_vertex_buffer(0, obstacle_vertex_buffer.slice(..));
 						render_pass.draw(0..(obstacle_mesh.len() as u32), 0..1);
 					},
-					ObjectMesh::Ship => {
+					Object::Ship { .. } => {
 						render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
 						render_pass.draw(0..(ship_mesh.len() as u32), 0..1);
 					},
-					ObjectMesh::Shot => {
+					Object::Shot { .. } => {
 						render_pass.set_vertex_buffer(0, shot_vertex_buffer.slice(..));
 						render_pass.draw(0..(shot_mesh.len() as u32), 0..1);
 					},
