@@ -835,6 +835,32 @@ pub fn run() {
 				state: ElementState::Pressed,
 				..
 			} if game_over => {
+				for dead_object in objects.iter() {
+					let instance_id = match dead_object {
+						Object::Obstacle { instance_id, .. } => instance_id,
+						Object::Shot { instance_id, .. } => instance_id,
+						Object::Ship { instance_id, .. } => instance_id,
+					};
+					match instance_table
+						.table
+						.get_mut(&instance_id.mesh)
+						.unwrap()
+						.instances
+					{
+						MeshInstances::Object(ref mut vec) => {
+							vec[instance_id.instance_index] = ObjectInstancePod::zeroed();
+						},
+						MeshInstances::Shape(ref mut vec) => {
+							vec[instance_id.instance_index] = ShapeInstancePod::zeroed();
+						},
+					}
+					instance_table
+						.table
+						.get_mut(&instance_id.mesh)
+						.unwrap()
+						.unused_instances[instance_id.instance_index] = true;
+				}
+
 				game_over = false;
 				score = 0;
 				init_objects(&mut objects, &mut instance_table, &spawn_obstacles);
@@ -1011,7 +1037,31 @@ pub fn run() {
 
 				dead_object_indices.sort();
 				for dead_object_index in dead_object_indices.into_iter().rev() {
-					objects.remove(dead_object_index);
+					let dead_object = objects.remove(dead_object_index);
+
+					let instance_id = match dead_object {
+						Object::Obstacle { instance_id, .. } => instance_id,
+						Object::Shot { instance_id, .. } => instance_id,
+						Object::Ship { instance_id, .. } => instance_id,
+					};
+					match instance_table
+						.table
+						.get_mut(&instance_id.mesh)
+						.unwrap()
+						.instances
+					{
+						MeshInstances::Object(ref mut vec) => {
+							vec[instance_id.instance_index] = ObjectInstancePod::zeroed();
+						},
+						MeshInstances::Shape(ref mut vec) => {
+							vec[instance_id.instance_index] = ShapeInstancePod::zeroed();
+						},
+					}
+					instance_table
+						.table
+						.get_mut(&instance_id.mesh)
+						.unwrap()
+						.unused_instances[instance_id.instance_index] = true;
 				}
 
 				if spawn_event {
