@@ -492,6 +492,14 @@ pub fn run() {
 			}
 		}
 
+		fn instance_ids(&self) -> impl Iterator<Item = InstanceID> {
+			match self {
+				Object::Ship { instance_id, .. } => std::iter::once(*instance_id),
+				Object::Shot { instance_id, .. } => std::iter::once(*instance_id),
+				Object::Obstacle { instance_id, .. } => std::iter::once(*instance_id),
+			}
+		}
+
 		fn collide_with(&self, other: &Object) -> bool {
 			// TODO: Make something serious that check for collision of triangles of the mesh projected
 			// onto the screen plane.
@@ -500,17 +508,6 @@ pub fn run() {
 			distance < self.scale() + other.scale()
 		}
 	}
-
-	/*
-	enum MeshVertices {
-		Object(Vec<ObjectVertexPod>),
-		Shape(Vec<ShapeVertexPod>),
-	}
-	struct Mesh {
-		vertices: MeshVertices,
-		wgpu_buffer: wgpu::Buffer,
-	}
-	*/
 
 	#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 	enum WhichMesh {
@@ -631,20 +628,42 @@ pub fn run() {
 		Object(ObjectInstancePod),
 		Shape(ShapeInstancePod),
 	}
-	enum MeshInstances {
+	enum MeshInstanceVec {
 		Object(Vec<ObjectInstancePod>),
 		Shape(Vec<ShapeInstancePod>),
 	}
-	impl MeshInstances {
+	impl MeshInstanceVec {
 		fn len(&self) -> usize {
 			match self {
-				MeshInstances::Object(vec) => vec.len(),
-				MeshInstances::Shape(vec) => vec.len(),
+				MeshInstanceVec::Object(vec) => vec.len(),
+				MeshInstanceVec::Shape(vec) => vec.len(),
+			}
+		}
+		fn push(&mut self, instance: MeshInstance) {
+			match (self, instance) {
+				(MeshInstanceVec::Object(ref mut vec), MeshInstance::Object(instance)) => {
+					vec.push(instance);
+				},
+				(MeshInstanceVec::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
+					vec.push(instance);
+				},
+				_ => panic!("instance variant does not match variant of the vec"),
+			}
+		}
+		fn set(&mut self, index: usize, instance: MeshInstance) {
+			match (self, instance) {
+				(MeshInstanceVec::Object(ref mut vec), MeshInstance::Object(instance)) => {
+					vec[index] = instance;
+				},
+				(MeshInstanceVec::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
+					vec[index] = instance;
+				},
+				_ => panic!("instance variant does not match variant of the vec"),
 			}
 		}
 	}
 	struct InstanceArrayForOneMesh {
-		instances: MeshInstances,
+		instances: MeshInstanceVec,
 		unused_instances: Vec<bool>, // `true` means unused
 		wgpu_buffer: Option<wgpu::Buffer>,
 	}
@@ -653,31 +672,28 @@ pub fn run() {
 	}
 
 	let mut instance_table = InstanceTable { table: HashMap::new() };
-	instance_table.table.insert(
-		WhichMesh::Obstacle,
-		InstanceArrayForOneMesh {
-			instances: MeshInstances::Object(Vec::new()),
-			unused_instances: Vec::new(),
-			wgpu_buffer: None,
-		},
-	);
-	instance_table.table.insert(
-		WhichMesh::Shot,
-		InstanceArrayForOneMesh {
-			instances: MeshInstances::Object(Vec::new()),
-			unused_instances: Vec::new(),
-			wgpu_buffer: None,
-		},
-	);
-	instance_table.table.insert(
-		WhichMesh::Ship,
-		InstanceArrayForOneMesh {
-			instances: MeshInstances::Object(Vec::new()),
-			unused_instances: Vec::new(),
-			wgpu_buffer: None,
-		},
-	);
+	for mesh in [WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+		instance_table.table.insert(
+			mesh,
+			InstanceArrayForOneMesh {
+				instances: MeshInstanceVec::Object(Vec::new()),
+				unused_instances: Vec::new(),
+				wgpu_buffer: None,
+			},
+		);
+	}
 
+	impl InstanceTable {
+		fn instance_array_len(&self, mesh: WhichMesh) -> Option<usize> {
+			Some(self.table.get(&mesh)?.instances.len())
+		}
+
+		fn instance_array_buffer_slice(&self, mesh: WhichMesh) -> Option<wgpu::BufferSlice> {
+			Some(self.table.get(&mesh)?.wgpu_buffer.as_ref()?.slice(..))
+		}
+	}
+
+	#[derive(Clone, Copy)]
 	struct InstanceID {
 		mesh: WhichMesh,
 		instance_index: usize,
@@ -689,32 +705,34 @@ pub fn run() {
 				for index in 0..array.instances.len() {
 					if array.unused_instances[index] {
 						array.unused_instances[index] = false;
-						match (&mut array.instances, instance) {
-							(MeshInstances::Object(ref mut vec), MeshInstance::Object(instance)) => {
-								vec[index] = instance;
-							},
-							(MeshInstances::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
-								vec[index] = instance;
-							},
-							_ => panic!("instance type does not match instance type of the mesh table"),
-						}
+						array.instances.set(index, instance);
 						return InstanceID { mesh, instance_index: index };
 					}
 				}
-				match (&mut array.instances, instance) {
-					(MeshInstances::Object(ref mut vec), MeshInstance::Object(instance)) => {
-						vec.push(instance);
-					},
-					(MeshInstances::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
-						vec.push(instance);
-					},
-					_ => panic!("instance type does not match instance type of the mesh table"),
-				}
+				array.instances.push(instance);
 				array.unused_instances.push(false);
 				InstanceID { mesh, instance_index: array.instances.len() - 1 }
 			} else {
 				panic!("The table for mesh {mesh:?} is missing");
 			}
+		}
+
+		fn remove_instance(&mut self, instance_id: InstanceID) {
+			// Note that a zeroed instance that has a `scale` field will have a scale of zero
+			// and thus all its geometry is invisible, which is the intended effect of removing it.
+			match self.table.get_mut(&instance_id.mesh).unwrap().instances {
+				MeshInstanceVec::Object(ref mut vec) => {
+					vec[instance_id.instance_index] = ObjectInstancePod::zeroed();
+				},
+				MeshInstanceVec::Shape(ref mut vec) => {
+					vec[instance_id.instance_index] = ShapeInstancePod::zeroed();
+				},
+			}
+			self
+				.table
+				.get_mut(&instance_id.mesh)
+				.unwrap()
+				.unused_instances[instance_id.instance_index] = true;
 		}
 	}
 
@@ -836,29 +854,9 @@ pub fn run() {
 				..
 			} if game_over => {
 				for dead_object in objects.iter() {
-					let instance_id = match dead_object {
-						Object::Obstacle { instance_id, .. } => instance_id,
-						Object::Shot { instance_id, .. } => instance_id,
-						Object::Ship { instance_id, .. } => instance_id,
-					};
-					match instance_table
-						.table
-						.get_mut(&instance_id.mesh)
-						.unwrap()
-						.instances
-					{
-						MeshInstances::Object(ref mut vec) => {
-							vec[instance_id.instance_index] = ObjectInstancePod::zeroed();
-						},
-						MeshInstances::Shape(ref mut vec) => {
-							vec[instance_id.instance_index] = ShapeInstancePod::zeroed();
-						},
+					for instance_id in dead_object.instance_ids() {
+						instance_table.remove_instance(instance_id);
 					}
-					instance_table
-						.table
-						.get_mut(&instance_id.mesh)
-						.unwrap()
-						.unused_instances[instance_id.instance_index] = true;
 				}
 
 				game_over = false;
@@ -1038,30 +1036,9 @@ pub fn run() {
 				dead_object_indices.sort();
 				for dead_object_index in dead_object_indices.into_iter().rev() {
 					let dead_object = objects.remove(dead_object_index);
-
-					let instance_id = match dead_object {
-						Object::Obstacle { instance_id, .. } => instance_id,
-						Object::Shot { instance_id, .. } => instance_id,
-						Object::Ship { instance_id, .. } => instance_id,
-					};
-					match instance_table
-						.table
-						.get_mut(&instance_id.mesh)
-						.unwrap()
-						.instances
-					{
-						MeshInstances::Object(ref mut vec) => {
-							vec[instance_id.instance_index] = ObjectInstancePod::zeroed();
-						},
-						MeshInstances::Shape(ref mut vec) => {
-							vec[instance_id.instance_index] = ShapeInstancePod::zeroed();
-						},
+					for instance_id in dead_object.instance_ids() {
+						instance_table.remove_instance(instance_id);
 					}
-					instance_table
-						.table
-						.get_mut(&instance_id.mesh)
-						.unwrap()
-						.unused_instances[instance_id.instance_index] = true;
 				}
 
 				if spawn_event {
@@ -1101,80 +1078,6 @@ pub fn run() {
 				queue.submit(std::iter::once(encoder.finish()));
 			}
 
-			/*
-			for object in objects.iter() {
-				if object.is_ship() && game_over {
-					continue;
-				}
-
-				let mesh_angle = match object {
-					Object::Ship { position, .. } => {
-						let ship_to_cursor = cursor_position - *position;
-						let angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
-						angle - TAU / 4.0
-					},
-					Object::Shot { angle, .. } => angle - TAU / 4.0,
-					Object::Obstacle { angle, .. } => *angle,
-				};
-
-				queue.write_buffer(
-					&object_shader_uniform_position.buffer,
-					0,
-					bytemuck::cast_slice(&[Vector2Pod { values: object.position().into() }]),
-				);
-				queue.write_buffer(
-					&object_shader_uniform_angle.buffer,
-					0,
-					bytemuck::cast_slice(&[mesh_angle]),
-				);
-				queue.write_buffer(
-					&object_shader_uniform_scale.buffer,
-					0,
-					bytemuck::cast_slice(&[object.scale()]),
-				);
-
-				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-					label: Some("Render Encoder"),
-				});
-				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-					label: Some("Render Pass"),
-					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: &window_texture_view,
-						resolve_target: None,
-						ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: true },
-					})],
-					depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-						view: &z_buffer_view,
-						depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: true }),
-						stencil_ops: None,
-					}),
-				});
-
-				render_pass.set_pipeline(&object_render_pipeline);
-				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
-
-				match object {
-					Object::Obstacle { .. } => {
-						render_pass.set_vertex_buffer(0, obstacle_vertex_buffer.slice(..));
-						render_pass.draw(0..(obstacle_mesh.len() as u32), 0..1);
-					},
-					Object::Ship { .. } => {
-						render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
-						render_pass.draw(0..(ship_mesh.len() as u32), 0..1);
-					},
-					Object::Shot { .. } => {
-						render_pass.set_vertex_buffer(0, shot_vertex_buffer.slice(..));
-						render_pass.draw(0..(shot_mesh.len() as u32), 0..1);
-					},
-				}
-
-				// Release `render_pass.parent` which is a ref mut to `encoder`.
-				drop(render_pass);
-
-				queue.submit(std::iter::once(encoder.finish()));
-			}
-			*/
-
 			{
 				for object in objects.iter() {
 					if object.is_ship() && game_over {
@@ -1212,7 +1115,7 @@ pub fn run() {
 						.unwrap()
 						.instances;
 					match instances {
-						MeshInstances::Object(ref mut vec) => {
+						MeshInstanceVec::Object(ref mut vec) => {
 							vec[instance_id.instance_index] = ObjectInstancePod {
 								position: [position.x, position.y],
 								angle: mesh_angle,
@@ -1220,7 +1123,7 @@ pub fn run() {
 								shade_sensitivity,
 							};
 						},
-						MeshInstances::Shape(ref mut vec) => {
+						MeshInstanceVec::Shape(ref mut vec) => {
 							vec[instance_id.instance_index] = ShapeInstancePod {
 								position: [position.x, position.y],
 								angle: mesh_angle,
@@ -1230,100 +1133,29 @@ pub fn run() {
 					}
 				}
 
-				let instances = if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Obstacle].instances
-				{
-					instances
-				} else {
-					panic!();
-				};
-				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("Obstacle Instance Buffer"),
-					contents: bytemuck::cast_slice(instances.as_slice()),
-					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-				});
-				instance_table
-					.table
-					.get_mut(&WhichMesh::Obstacle)
-					.unwrap()
-					.wgpu_buffer = Some(buffer);
-				if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Obstacle].instances
-				{
-					queue.write_buffer(
-						instance_table.table[&WhichMesh::Obstacle]
-							.wgpu_buffer
-							.as_ref()
-							.unwrap(),
-						0,
-						bytemuck::cast_slice(instances.as_slice()),
-					);
-				} else {
-					panic!();
-				}
-
-				let instances = if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Ship].instances
-				{
-					instances
-				} else {
-					panic!();
-				};
-				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("Ship Instance Buffer"),
-					contents: bytemuck::cast_slice(instances.as_slice()),
-					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-				});
-				instance_table
-					.table
-					.get_mut(&WhichMesh::Ship)
-					.unwrap()
-					.wgpu_buffer = Some(buffer);
-				if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Ship].instances
-				{
-					queue.write_buffer(
-						instance_table.table[&WhichMesh::Ship]
-							.wgpu_buffer
-							.as_ref()
-							.unwrap(),
-						0,
-						bytemuck::cast_slice(instances.as_slice()),
-					);
-				} else {
-					panic!();
-				}
-
-				let instances = if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Shot].instances
-				{
-					instances
-				} else {
-					panic!();
-				};
-				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("Shot Instance Buffer"),
-					contents: bytemuck::cast_slice(instances.as_slice()),
-					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-				});
-				instance_table
-					.table
-					.get_mut(&WhichMesh::Shot)
-					.unwrap()
-					.wgpu_buffer = Some(buffer);
-				if let MeshInstances::Object(instances) =
-					&instance_table.table[&WhichMesh::Shot].instances
-				{
-					queue.write_buffer(
-						instance_table.table[&WhichMesh::Shot]
-							.wgpu_buffer
-							.as_ref()
-							.unwrap(),
-						0,
-						bytemuck::cast_slice(instances.as_slice()),
-					);
-				} else {
-					panic!();
+				for mesh in &[WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+					let instances = if let MeshInstanceVec::Object(instances) =
+						&instance_table.table[mesh].instances
+					{
+						instances
+					} else {
+						panic!();
+					};
+					let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+						label: Some(&format!("{mesh:?} Instance Buffer")),
+						contents: bytemuck::cast_slice(instances.as_slice()),
+						usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+					});
+					instance_table.table.get_mut(mesh).unwrap().wgpu_buffer = Some(buffer);
+					if let MeshInstanceVec::Object(instances) = &instance_table.table[mesh].instances {
+						queue.write_buffer(
+							instance_table.table[mesh].wgpu_buffer.as_ref().unwrap(),
+							0,
+							bytemuck::cast_slice(instances.as_slice()),
+						);
+					} else {
+						panic!();
+					}
 				}
 
 				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1346,47 +1178,25 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
 
-				render_pass.set_vertex_buffer(0, obstacle_vertex_buffer.slice(..));
-				render_pass.set_vertex_buffer(
-					1,
-					instance_table.table[&WhichMesh::Obstacle]
-						.wgpu_buffer
-						.as_ref()
-						.unwrap()
-						.slice(..),
-				);
-				render_pass.draw(
-					0..(obstacle_mesh.len() as u32),
-					0..(instance_table.table[&WhichMesh::Obstacle].instances.len() as u32),
-				);
-
-				render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
-				render_pass.set_vertex_buffer(
-					1,
-					instance_table.table[&WhichMesh::Ship]
-						.wgpu_buffer
-						.as_ref()
-						.unwrap()
-						.slice(..),
-				);
-				render_pass.draw(
-					0..(ship_mesh.len() as u32),
-					0..(instance_table.table[&WhichMesh::Ship].instances.len() as u32),
-				);
-
-				render_pass.set_vertex_buffer(0, shot_vertex_buffer.slice(..));
-				render_pass.set_vertex_buffer(
-					1,
-					instance_table.table[&WhichMesh::Shot]
-						.wgpu_buffer
-						.as_ref()
-						.unwrap()
-						.slice(..),
-				);
-				render_pass.draw(
-					0..(shot_mesh.len() as u32),
-					0..(instance_table.table[&WhichMesh::Shot].instances.len() as u32),
-				);
+				for mesh in [WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+					let mesh_buffer = match mesh {
+						WhichMesh::Obstacle => &obstacle_vertex_buffer,
+						WhichMesh::Ship => &ship_vertex_buffer,
+						WhichMesh::Shot => &shot_vertex_buffer,
+					};
+					let mesh_len = match mesh {
+						WhichMesh::Obstacle => obstacle_mesh.len(),
+						WhichMesh::Ship => ship_mesh.len(),
+						WhichMesh::Shot => shot_mesh.len(),
+					};
+					render_pass.set_vertex_buffer(0, mesh_buffer.slice(..));
+					render_pass
+						.set_vertex_buffer(1, instance_table.instance_array_buffer_slice(mesh).unwrap());
+					render_pass.draw(
+						0..(mesh_len as u32),
+						0..(instance_table.instance_array_len(mesh).unwrap() as u32),
+					);
+				}
 
 				// Release `render_pass.parent` which is a ref mut to `encoder`.
 				drop(render_pass);
