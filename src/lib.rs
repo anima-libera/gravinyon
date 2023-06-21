@@ -39,6 +39,7 @@ struct ObjectInstancePod {
 	position: [f32; 2],
 	angle: f32,
 	scale: f32,
+	shade_sensitivity: f32,
 }
 
 /// Instance type used with shape shader.
@@ -290,6 +291,11 @@ pub fn run() {
 				wgpu::VertexAttribute {
 					offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
 					shader_location: 5,
+					format: wgpu::VertexFormat::Float32,
+				},
+				wgpu::VertexAttribute {
+					offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+					shader_location: 6,
 					format: wgpu::VertexFormat::Float32,
 				},
 			],
@@ -578,7 +584,7 @@ pub fn run() {
 		shot_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
 		shot_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
 	};
-	let center = [0.0, 0.0, 0.0001];
+	let center = [0.0, 0.0, 0.1];
 	add_triangle([center, [0.6, 0.0, 0.0], [0.0, 1.5, 0.0]]);
 	add_triangle([center, [0.0, -7.0, 0.0], [0.6, 0.0, 0.0]]);
 	add_triangle([center, [-0.6, 0.0, 0.0], [0.0, -7.0, 0.0]]);
@@ -1145,6 +1151,10 @@ pub fn run() {
 						Object::Shot { instance_id, .. } => instance_id,
 						Object::Ship { instance_id, .. } => instance_id,
 					};
+					let shade_sensitivity = match object {
+						Object::Obstacle { .. } | Object::Ship { .. } => 3.0,
+						Object::Shot { .. } => 0.0,
+					};
 
 					let instances = &mut instance_table
 						.table
@@ -1157,6 +1167,7 @@ pub fn run() {
 								position: [position.x, position.y],
 								angle: mesh_angle,
 								scale,
+								shade_sensitivity,
 							};
 						},
 						MeshInstances::Shape(ref mut vec) => {

@@ -7,6 +7,7 @@ struct InstanceInput {
 	@location(3) position: vec2<f32>,
 	@location(4) angle: f32,
 	@location(5) scale: f32,
+	@location(6) shade_sensitivity: f32,
 };
 
 
@@ -53,7 +54,8 @@ fn vertex_shader_main(vertex_input: VertexInput, instance_input: InstanceInput) 
 	var shade = dot(normal, uniform_light_direction);
 	shade = f(shade * 4.0);
 
-	vertex_output.color = vec4<f32>(vertex_input.color * (1.0 + shade * 3.0), 1.0);
+	var sensitivity = instance_input.shade_sensitivity;
+	vertex_output.color = vec4<f32>(vertex_input.color * (1.0 + shade * sensitivity), 1.0);
 	return vertex_output;
 }
 
