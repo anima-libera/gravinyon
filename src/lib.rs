@@ -1,4 +1,4 @@
-use std::f32::consts::TAU;
+use std::{collections::HashMap, f32::consts::TAU};
 
 use bytemuck::Zeroable;
 use cgmath::{InnerSpace, MetricSpace};
@@ -9,7 +9,7 @@ use winit::{
 	window::WindowBuilder,
 };
 
-/// Vertex type used in object meshes.
+/// Vertex type used for mesh in object shader.
 #[derive(Copy, Clone, Debug)]
 /// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
 #[repr(C)]
@@ -20,7 +20,7 @@ struct ObjectVertexPod {
 	normal: [f32; 3],
 }
 
-/// Vertex type used in shape meshes.
+/// Vertex type used for mesh in shape shader.
 #[derive(Copy, Clone, Debug)]
 /// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
 #[repr(C)]
@@ -28,6 +28,28 @@ struct ObjectVertexPod {
 struct ShapeVertexPod {
 	position: [f32; 3],
 	color: [f32; 3],
+}
+
+/// Instance type used with object shader.
+#[derive(Copy, Clone, Debug)]
+/// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+struct ObjectInstancePod {
+	position: [f32; 2],
+	angle: f32,
+	scale: f32,
+}
+
+/// Instance type used with shape shader.
+#[derive(Copy, Clone, Debug)]
+/// Certified Plain Old Data (so it can be sent to the GPU as a uniform).
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable)]
+struct ShapeInstancePod {
+	position: [f32; 2],
+	angle: f32,
+	scale: f32,
 }
 
 /// Vector in 3D.
@@ -211,39 +233,12 @@ pub fn run() {
 		wgpu::ShaderStages::VERTEX,
 		bytemuck::cast_slice(&[aspect_ratio]),
 	);
-	let object_shader_uniform_position = UniformStuff::new(
-		&device,
-		"Position",
-		2,
-		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-		wgpu::ShaderStages::VERTEX,
-		bytemuck::cast_slice(&[Vector2Pod::zeroed()]),
-	);
-	let object_shader_uniform_angle = UniformStuff::new(
-		&device,
-		"Angle",
-		3,
-		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-		wgpu::ShaderStages::VERTEX,
-		bytemuck::cast_slice(&[f32::zeroed()]),
-	);
-	let object_shader_uniform_scale = UniformStuff::new(
-		&device,
-		"Scale",
-		4,
-		wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-		wgpu::ShaderStages::VERTEX,
-		bytemuck::cast_slice(&[f32::zeroed()]),
-	);
 
 	let object_shader_bind_group_layout =
 		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
 			entries: &[
 				object_shader_uniform_light_direction.bind_group_layout_entry,
 				object_shader_uniform_aspect_ratio.bind_group_layout_entry,
-				object_shader_uniform_position.bind_group_layout_entry,
-				object_shader_uniform_angle.bind_group_layout_entry,
-				object_shader_uniform_scale.bind_group_layout_entry,
 			],
 			label: Some("Object Bind Group Layout"),
 		});
@@ -252,9 +247,6 @@ pub fn run() {
 		entries: &[
 			object_shader_uniform_light_direction.bind_group_entry(),
 			object_shader_uniform_aspect_ratio.bind_group_entry(),
-			object_shader_uniform_position.bind_group_entry(),
-			object_shader_uniform_angle.bind_group_entry(),
-			object_shader_uniform_scale.bind_group_entry(),
 		],
 		label: Some("Object Bind Group"),
 	});
@@ -281,6 +273,27 @@ pub fn run() {
 				},
 			],
 		};
+		let object_instance_buffer_layout = wgpu::VertexBufferLayout {
+			array_stride: std::mem::size_of::<ObjectInstancePod>() as wgpu::BufferAddress,
+			step_mode: wgpu::VertexStepMode::Instance,
+			attributes: &[
+				wgpu::VertexAttribute {
+					offset: 0,
+					shader_location: 3,
+					format: wgpu::VertexFormat::Float32x2,
+				},
+				wgpu::VertexAttribute {
+					offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+					shader_location: 4,
+					format: wgpu::VertexFormat::Float32,
+				},
+				wgpu::VertexAttribute {
+					offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+					shader_location: 5,
+					format: wgpu::VertexFormat::Float32,
+				},
+			],
+		};
 		let object_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label: Some("Object Shader"),
 			source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/object.wgsl").into()),
@@ -297,7 +310,7 @@ pub fn run() {
 			vertex: wgpu::VertexState {
 				module: &object_shader,
 				entry_point: "vertex_shader_main",
-				buffers: &[object_vertex_buffer_layout],
+				buffers: &[object_vertex_buffer_layout, object_instance_buffer_layout],
 			},
 			fragment: Some(wgpu::FragmentState {
 				module: &object_shader,
@@ -426,10 +439,12 @@ pub fn run() {
 		Ship {
 			position: cgmath::Point2<f32>,
 			motion: cgmath::Vector2<f32>,
+			instance_id: InstanceID,
 		},
 		Shot {
 			position: cgmath::Point2<f32>,
 			angle: f32,
+			instance_id: InstanceID,
 		},
 		Obstacle {
 			position: cgmath::Point2<f32>,
@@ -438,6 +453,7 @@ pub fn run() {
 			angle_rotation: f32,
 			scale: f32,
 			life: u32,
+			instance_id: InstanceID,
 		},
 	}
 
@@ -477,6 +493,24 @@ pub fn run() {
 			let distance = self.position().distance(other.position());
 			distance < self.scale() + other.scale()
 		}
+	}
+
+	/*
+	enum MeshVertices {
+		Object(Vec<ObjectVertexPod>),
+		Shape(Vec<ShapeVertexPod>),
+	}
+	struct Mesh {
+		vertices: MeshVertices,
+		wgpu_buffer: wgpu::Buffer,
+	}
+	*/
+
+	#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+	enum WhichMesh {
+		Obstacle,
+		Shot,
+		Ship,
 	}
 
 	let mut obstacle_mesh = Vec::new();
@@ -587,30 +621,135 @@ pub fn run() {
 			usage: wgpu::BufferUsages::VERTEX,
 		});
 
-	let spawn_obstacles = |objects: &mut Vec<Object>, how_many: usize| {
-		for _i in 0..how_many {
-			objects.push(Object::Obstacle {
-				position: cgmath::Point2 { x: 1.05, y: rand::thread_rng().gen_range(-0.4..0.4) },
-				angle: rand::thread_rng().gen_range(0.0..TAU),
-				scale: rand::thread_rng().gen_range(0.02..0.04),
-				motion: cgmath::Vector2 {
-					x: rand::thread_rng().gen_range(-0.003..0.0005),
-					y: rand::thread_rng().gen_range(-0.001..0.001),
-				},
-				angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
-				life: 21,
-			});
+	enum MeshInstance {
+		Object(ObjectInstancePod),
+		Shape(ShapeInstancePod),
+	}
+	enum MeshInstances {
+		Object(Vec<ObjectInstancePod>),
+		Shape(Vec<ShapeInstancePod>),
+	}
+	impl MeshInstances {
+		fn len(&self) -> usize {
+			match self {
+				MeshInstances::Object(vec) => vec.len(),
+				MeshInstances::Shape(vec) => vec.len(),
+			}
 		}
-	};
+	}
+	struct InstanceArrayForOneMesh {
+		instances: MeshInstances,
+		unused_instances: Vec<bool>, // `true` means unused
+		wgpu_buffer: Option<wgpu::Buffer>,
+	}
+	struct InstanceTable {
+		table: HashMap<WhichMesh, InstanceArrayForOneMesh>,
+	}
 
-	let init_objects = |objects: &mut Vec<Object>,
-	                    spawn_obstacles: &dyn Fn(&mut Vec<Object>, usize)| {
-		*objects = Vec::new();
-		objects.push(Object::Ship { position: (0.0, 0.0).into(), motion: (0.0, 0.0).into() });
-		spawn_obstacles(objects, 5);
-	};
+	let mut instance_table = InstanceTable { table: HashMap::new() };
+	instance_table.table.insert(
+		WhichMesh::Obstacle,
+		InstanceArrayForOneMesh {
+			instances: MeshInstances::Object(Vec::new()),
+			unused_instances: Vec::new(),
+			wgpu_buffer: None,
+		},
+	);
+	instance_table.table.insert(
+		WhichMesh::Shot,
+		InstanceArrayForOneMesh {
+			instances: MeshInstances::Object(Vec::new()),
+			unused_instances: Vec::new(),
+			wgpu_buffer: None,
+		},
+	);
+	instance_table.table.insert(
+		WhichMesh::Ship,
+		InstanceArrayForOneMesh {
+			instances: MeshInstances::Object(Vec::new()),
+			unused_instances: Vec::new(),
+			wgpu_buffer: None,
+		},
+	);
+
+	struct InstanceID {
+		mesh: WhichMesh,
+		instance_index: usize,
+	}
+
+	impl InstanceTable {
+		fn insert_new_instance(&mut self, mesh: WhichMesh, instance: MeshInstance) -> InstanceID {
+			if let Some(array) = self.table.get_mut(&mesh) {
+				for index in 0..array.instances.len() {
+					if array.unused_instances[index] {
+						array.unused_instances[index] = false;
+						match (&mut array.instances, instance) {
+							(MeshInstances::Object(ref mut vec), MeshInstance::Object(instance)) => {
+								vec[index] = instance;
+							},
+							(MeshInstances::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
+								vec[index] = instance;
+							},
+							_ => panic!("instance type does not match instance type of the mesh table"),
+						}
+						return InstanceID { mesh, instance_index: index };
+					}
+				}
+				match (&mut array.instances, instance) {
+					(MeshInstances::Object(ref mut vec), MeshInstance::Object(instance)) => {
+						vec.push(instance);
+					},
+					(MeshInstances::Shape(ref mut vec), MeshInstance::Shape(instance)) => {
+						vec.push(instance);
+					},
+					_ => panic!("instance type does not match instance type of the mesh table"),
+				}
+				array.unused_instances.push(false);
+				InstanceID { mesh, instance_index: array.instances.len() - 1 }
+			} else {
+				panic!("The table for mesh {mesh:?} is missing");
+			}
+		}
+	}
+
+	let spawn_obstacles =
+		|objects: &mut Vec<Object>, instance_table: &mut InstanceTable, how_many: usize| {
+			for _i in 0..how_many {
+				objects.push(Object::Obstacle {
+					position: cgmath::Point2 { x: 1.05, y: rand::thread_rng().gen_range(-0.4..0.4) },
+					angle: rand::thread_rng().gen_range(0.0..TAU),
+					scale: rand::thread_rng().gen_range(0.02..0.04),
+					motion: cgmath::Vector2 {
+						x: rand::thread_rng().gen_range(-0.003..0.0005),
+						y: rand::thread_rng().gen_range(-0.001..0.001),
+					},
+					angle_rotation: rand::thread_rng().gen_range((-TAU * 0.002)..(TAU * 0.002)),
+					life: 21,
+					instance_id: instance_table.insert_new_instance(
+						WhichMesh::Obstacle,
+						MeshInstance::Object(ObjectInstancePod::zeroed()),
+					),
+				});
+			}
+		};
+
+	let init_objects =
+		|objects: &mut Vec<Object>,
+		 instance_table: &mut InstanceTable,
+		 spawn_obstacles: &dyn Fn(&mut Vec<Object>, &mut InstanceTable, usize)| {
+			*objects = Vec::new();
+			objects.push(Object::Ship {
+				position: (0.0, 0.0).into(),
+				motion: (0.0, 0.0).into(),
+				instance_id: instance_table.insert_new_instance(
+					WhichMesh::Ship,
+					MeshInstance::Object(ObjectInstancePod::zeroed()),
+				),
+			});
+			spawn_obstacles(objects, instance_table, 5);
+		};
 	let mut objects = Vec::new();
-	init_objects(&mut objects, &spawn_obstacles);
+	init_objects(&mut objects, &mut instance_table, &spawn_obstacles);
 
 	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
 
@@ -668,7 +807,7 @@ pub fn run() {
 				state: ElementState::Pressed,
 				..
 			} if !game_over => {
-				if let Object::Ship { position, motion } = objects.get_mut(0).unwrap() {
+				if let Object::Ship { position, motion, .. } = objects.get_mut(0).unwrap() {
 					let ship_to_cursor = cursor_position - *position;
 					let ship_to_cursor_angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
 					let force = cgmath::Vector2::<f32> {
@@ -692,7 +831,7 @@ pub fn run() {
 			} if game_over => {
 				game_over = false;
 				score = 0;
-				init_objects(&mut objects, &spawn_obstacles);
+				init_objects(&mut objects, &mut instance_table, &spawn_obstacles);
 			},
 
 			_ => {},
@@ -700,7 +839,7 @@ pub fn run() {
 
 		Event::MainEventsCleared => {
 			if !game_over {
-				if let Object::Ship { position, motion } = objects.get_mut(0).unwrap() {
+				if let Object::Ship { position, motion, .. } = objects.get_mut(0).unwrap() {
 					let ship_to_cursor = cursor_position - *position;
 
 					let ship_to_cursor_distance = ship_to_cursor.magnitude();
@@ -742,7 +881,14 @@ pub fn run() {
 						let position_to_cursor = (cursor_position - position).normalize();
 						let position_to_cursor_angle =
 							f32::atan2(position_to_cursor.y, position_to_cursor.x);
-						let shot = Object::Shot { position, angle: position_to_cursor_angle };
+						let shot = Object::Shot {
+							position,
+							angle: position_to_cursor_angle,
+							instance_id: instance_table.insert_new_instance(
+								WhichMesh::Shot,
+								MeshInstance::Object(ObjectInstancePod::zeroed()),
+							),
+						};
 						objects.push(shot);
 					}
 					shooting_delay = shooting_delay_max;
@@ -822,7 +968,7 @@ pub fn run() {
 							}
 						},
 
-						Object::Ship { position, motion } => {
+						Object::Ship { position, motion, .. } => {
 							*position += *motion;
 
 							if position.x <= -1.1 {
@@ -841,7 +987,7 @@ pub fn run() {
 							}
 						},
 
-						Object::Shot { position, angle } => {
+						Object::Shot { position, angle, .. } => {
 							let motion =
 								cgmath::Vector2::<f32> { x: f32::cos(*angle), y: f32::sin(*angle) } * 0.015;
 							*position += motion;
@@ -863,7 +1009,7 @@ pub fn run() {
 				}
 
 				if spawn_event {
-					spawn_obstacles(&mut objects, 2);
+					spawn_obstacles(&mut objects, &mut instance_table, 2);
 				}
 			}
 
@@ -899,6 +1045,7 @@ pub fn run() {
 				queue.submit(std::iter::once(encoder.finish()));
 			}
 
+			/*
 			for object in objects.iter() {
 				if object.is_ship() && game_over {
 					continue;
@@ -964,6 +1111,221 @@ pub fn run() {
 						render_pass.draw(0..(shot_mesh.len() as u32), 0..1);
 					},
 				}
+
+				// Release `render_pass.parent` which is a ref mut to `encoder`.
+				drop(render_pass);
+
+				queue.submit(std::iter::once(encoder.finish()));
+			}
+			*/
+
+			{
+				for object in objects.iter() {
+					if object.is_ship() && game_over {
+						continue;
+					}
+
+					let position = match object {
+						Object::Ship { position, .. } => position,
+						Object::Shot { position, .. } => position,
+						Object::Obstacle { position, .. } => position,
+					};
+					let mesh_angle = match object {
+						Object::Ship { position, .. } => {
+							let ship_to_cursor = cursor_position - *position;
+							let angle = f32::atan2(ship_to_cursor.y, ship_to_cursor.x);
+							angle - TAU / 4.0
+						},
+						Object::Shot { angle, .. } => angle - TAU / 4.0,
+						Object::Obstacle { angle, .. } => *angle,
+					};
+					let scale = object.scale();
+					let instance_id = match object {
+						Object::Obstacle { instance_id, .. } => instance_id,
+						Object::Shot { instance_id, .. } => instance_id,
+						Object::Ship { instance_id, .. } => instance_id,
+					};
+
+					let instances = &mut instance_table
+						.table
+						.get_mut(&instance_id.mesh)
+						.unwrap()
+						.instances;
+					match instances {
+						MeshInstances::Object(ref mut vec) => {
+							vec[instance_id.instance_index] = ObjectInstancePod {
+								position: [position.x, position.y],
+								angle: mesh_angle,
+								scale,
+							};
+						},
+						MeshInstances::Shape(ref mut vec) => {
+							vec[instance_id.instance_index] = ShapeInstancePod {
+								position: [position.x, position.y],
+								angle: mesh_angle,
+								scale,
+							};
+						},
+					}
+				}
+
+				let instances = if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Obstacle].instances
+				{
+					instances
+				} else {
+					panic!();
+				};
+				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some("Obstacle Instance Buffer"),
+					contents: bytemuck::cast_slice(instances.as_slice()),
+					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+				});
+				instance_table
+					.table
+					.get_mut(&WhichMesh::Obstacle)
+					.unwrap()
+					.wgpu_buffer = Some(buffer);
+				if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Obstacle].instances
+				{
+					queue.write_buffer(
+						instance_table.table[&WhichMesh::Obstacle]
+							.wgpu_buffer
+							.as_ref()
+							.unwrap(),
+						0,
+						bytemuck::cast_slice(instances.as_slice()),
+					);
+				} else {
+					panic!();
+				}
+
+				let instances = if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Ship].instances
+				{
+					instances
+				} else {
+					panic!();
+				};
+				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some("Ship Instance Buffer"),
+					contents: bytemuck::cast_slice(instances.as_slice()),
+					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+				});
+				instance_table
+					.table
+					.get_mut(&WhichMesh::Ship)
+					.unwrap()
+					.wgpu_buffer = Some(buffer);
+				if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Ship].instances
+				{
+					queue.write_buffer(
+						instance_table.table[&WhichMesh::Ship]
+							.wgpu_buffer
+							.as_ref()
+							.unwrap(),
+						0,
+						bytemuck::cast_slice(instances.as_slice()),
+					);
+				} else {
+					panic!();
+				}
+
+				let instances = if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Shot].instances
+				{
+					instances
+				} else {
+					panic!();
+				};
+				let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some("Shot Instance Buffer"),
+					contents: bytemuck::cast_slice(instances.as_slice()),
+					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+				});
+				instance_table
+					.table
+					.get_mut(&WhichMesh::Shot)
+					.unwrap()
+					.wgpu_buffer = Some(buffer);
+				if let MeshInstances::Object(instances) =
+					&instance_table.table[&WhichMesh::Shot].instances
+				{
+					queue.write_buffer(
+						instance_table.table[&WhichMesh::Shot]
+							.wgpu_buffer
+							.as_ref()
+							.unwrap(),
+						0,
+						bytemuck::cast_slice(instances.as_slice()),
+					);
+				} else {
+					panic!();
+				}
+
+				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					label: Some("Render Encoder"),
+				});
+				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: Some("Render Pass"),
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: &window_texture_view,
+						resolve_target: None,
+						ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: true },
+					})],
+					depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+						view: &z_buffer_view,
+						depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: true }),
+						stencil_ops: None,
+					}),
+				});
+
+				render_pass.set_pipeline(&object_render_pipeline);
+				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
+
+				render_pass.set_vertex_buffer(0, obstacle_vertex_buffer.slice(..));
+				render_pass.set_vertex_buffer(
+					1,
+					instance_table.table[&WhichMesh::Obstacle]
+						.wgpu_buffer
+						.as_ref()
+						.unwrap()
+						.slice(..),
+				);
+				render_pass.draw(
+					0..(obstacle_mesh.len() as u32),
+					0..(instance_table.table[&WhichMesh::Obstacle].instances.len() as u32),
+				);
+
+				render_pass.set_vertex_buffer(0, ship_vertex_buffer.slice(..));
+				render_pass.set_vertex_buffer(
+					1,
+					instance_table.table[&WhichMesh::Ship]
+						.wgpu_buffer
+						.as_ref()
+						.unwrap()
+						.slice(..),
+				);
+				render_pass.draw(
+					0..(ship_mesh.len() as u32),
+					0..(instance_table.table[&WhichMesh::Ship].instances.len() as u32),
+				);
+
+				render_pass.set_vertex_buffer(0, shot_vertex_buffer.slice(..));
+				render_pass.set_vertex_buffer(
+					1,
+					instance_table.table[&WhichMesh::Shot]
+						.wgpu_buffer
+						.as_ref()
+						.unwrap()
+						.slice(..),
+				);
+				render_pass.draw(
+					0..(shot_mesh.len() as u32),
+					0..(instance_table.table[&WhichMesh::Shot].instances.len() as u32),
+				);
 
 				// Release `render_pass.parent` which is a ref mut to `encoder`.
 				drop(render_pass);
