@@ -452,6 +452,11 @@ pub fn run() {
 			angle: f32,
 			instance_id: InstanceID,
 		},
+		EnemyShot {
+			position: cgmath::Point2<f32>,
+			angle: f32,
+			instance_id: InstanceID,
+		},
 		Obstacle {
 			position: cgmath::Point2<f32>,
 			motion: cgmath::Vector2<f32>,
@@ -470,6 +475,9 @@ pub fn run() {
 		fn is_shot(&self) -> bool {
 			matches!(self, Object::Shot { .. })
 		}
+		fn is_enemy_shot(&self) -> bool {
+			matches!(self, Object::EnemyShot { .. })
+		}
 		fn is_obstacle(&self) -> bool {
 			matches!(self, Object::Obstacle { .. })
 		}
@@ -478,6 +486,7 @@ pub fn run() {
 			match self {
 				Object::Ship { position, .. } => *position,
 				Object::Shot { position, .. } => *position,
+				Object::EnemyShot { position, .. } => *position,
 				Object::Obstacle { position, .. } => *position,
 			}
 		}
@@ -488,6 +497,7 @@ pub fn run() {
 			match self {
 				Object::Ship { .. } => Object::SHIP_SCALE,
 				Object::Shot { .. } => 0.01,
+				Object::EnemyShot { .. } => 0.01,
 				Object::Obstacle { scale, .. } => *scale,
 			}
 		}
@@ -496,6 +506,7 @@ pub fn run() {
 			match self {
 				Object::Ship { instance_id, .. } => std::iter::once(*instance_id),
 				Object::Shot { instance_id, .. } => std::iter::once(*instance_id),
+				Object::EnemyShot { instance_id, .. } => std::iter::once(*instance_id),
 				Object::Obstacle { instance_id, .. } => std::iter::once(*instance_id),
 			}
 		}
@@ -514,6 +525,7 @@ pub fn run() {
 		Obstacle,
 		Shot,
 		Ship,
+		EnemyShot,
 	}
 
 	let mut obstacle_mesh = Vec::new();
@@ -589,6 +601,30 @@ pub fn run() {
 	let shot_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Shot Vertex Buffer"),
 		contents: bytemuck::cast_slice(&shot_mesh),
+		usage: wgpu::BufferUsages::VERTEX,
+	});
+
+	let mut enemy_shot_mesh = Vec::new();
+	let mut add_triangle = |positions: [[f32; 3]; 3]| {
+		let a: cgmath::Vector3<f32> = positions[0].into();
+		let b: cgmath::Vector3<f32> = positions[1].into();
+		let c: cgmath::Vector3<f32> = positions[2].into();
+		let normal = (a - b).cross(c - b).normalize();
+		let normal: [f32; 3] = normal.into();
+		let color = [0.0, 0.8, 1.0]; // The center has a different color.
+		enemy_shot_mesh.push(ObjectVertexPod { position: positions[0], color, normal });
+		let color = [0.0, 0.5, 1.0];
+		enemy_shot_mesh.push(ObjectVertexPod { position: positions[1], color, normal });
+		enemy_shot_mesh.push(ObjectVertexPod { position: positions[2], color, normal });
+	};
+	let center = [0.0, 0.0, 0.1];
+	add_triangle([center, [0.6, 0.0, 0.0], [0.0, 1.5, 0.0]]);
+	add_triangle([center, [0.0, -7.0, 0.0], [0.6, 0.0, 0.0]]);
+	add_triangle([center, [-0.6, 0.0, 0.0], [0.0, -7.0, 0.0]]);
+	add_triangle([center, [0.0, 1.5, 0.0], [-0.6, 0.0, 0.0]]);
+	let enemy_shot_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+		label: Some("Enemy Shot Vertex Buffer"),
+		contents: bytemuck::cast_slice(&enemy_shot_mesh),
 		usage: wgpu::BufferUsages::VERTEX,
 	});
 
@@ -672,7 +708,12 @@ pub fn run() {
 	}
 
 	let mut instance_table = InstanceTable { table: HashMap::new() };
-	for mesh in [WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+	for mesh in [
+		WhichMesh::Obstacle,
+		WhichMesh::Ship,
+		WhichMesh::Shot,
+		WhichMesh::EnemyShot,
+	] {
 		instance_table.table.insert(
 			mesh,
 			InstanceArrayForOneMesh {
@@ -736,6 +777,20 @@ pub fn run() {
 		}
 	}
 
+	#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+	enum Level {
+		One,
+		Two,
+	}
+	let arg = std::env::args().nth(1);
+	let level = match arg.as_deref() {
+		Some("1") | Some("one") => Level::One,
+		Some("2") | Some("two") => Level::Two,
+		_ => Level::One,
+	};
+
+	dbg!(level);
+
 	let spawn_obstacles =
 		|objects: &mut Vec<Object>, instance_table: &mut InstanceTable, how_many: usize| {
 			for _i in 0..how_many {
@@ -757,23 +812,27 @@ pub fn run() {
 			}
 		};
 
-	let init_objects =
-		|objects: &mut Vec<Object>,
-		 instance_table: &mut InstanceTable,
-		 spawn_obstacles: &dyn Fn(&mut Vec<Object>, &mut InstanceTable, usize)| {
-			*objects = Vec::new();
-			objects.push(Object::Ship {
-				position: (0.0, 0.0).into(),
-				motion: (0.0, 0.0).into(),
-				instance_id: instance_table.insert_new_instance(
-					WhichMesh::Ship,
-					MeshInstance::Object(ObjectInstancePod::zeroed()),
-				),
-			});
-			spawn_obstacles(objects, instance_table, 5);
+	let init_objects = |objects: &mut Vec<Object>,
+	                    instance_table: &mut InstanceTable,
+	                    spawn_obstacles: &dyn Fn(&mut Vec<Object>, &mut InstanceTable, usize),
+	                    level: Level| {
+		*objects = Vec::new();
+		objects.push(Object::Ship {
+			position: (0.0, 0.0).into(),
+			motion: (0.0, 0.0).into(),
+			instance_id: instance_table.insert_new_instance(
+				WhichMesh::Ship,
+				MeshInstance::Object(ObjectInstancePod::zeroed()),
+			),
+		});
+		let how_many_obstacles = match level {
+			Level::One => 5,
+			Level::Two => 1,
 		};
+		spawn_obstacles(objects, instance_table, how_many_obstacles);
+	};
 	let mut objects = Vec::new();
-	init_objects(&mut objects, &mut instance_table, &spawn_obstacles);
+	init_objects(&mut objects, &mut instance_table, &spawn_obstacles, level);
 
 	let mut cursor_position: cgmath::Point2<f32> = (0.0, 0.0).into();
 
@@ -861,7 +920,7 @@ pub fn run() {
 
 				game_over = false;
 				score = 0;
-				init_objects(&mut objects, &mut instance_table, &spawn_obstacles);
+				init_objects(&mut objects, &mut instance_table, &spawn_obstacles, level);
 			},
 
 			_ => {},
@@ -929,6 +988,8 @@ pub fn run() {
 
 				let mut dead_object_indices = Vec::new();
 
+				let mut new_objects = Vec::new();
+
 				'object_loop: for object_index in 0..objects.len() {
 					let object = objects.get(object_index).unwrap();
 
@@ -950,11 +1011,24 @@ pub fn run() {
 						{
 							object_is_obstacle_and_takes_damage += 1;
 						} else if object.is_ship()
-							&& other_object.is_obstacle()
+							&& (other_object.is_obstacle() || other_object.is_enemy_shot())
 							&& object.collide_with(other_object)
 						{
 							game_over = true;
 							println!("Game over >w<  Score: {score}");
+						} else if object.is_ship()
+							&& other_object.is_obstacle()
+							&& object.position().distance(other_object.position()) < 0.35
+							&& level == Level::Two
+						{
+							let direction = (object.position() - other_object.position()).normalize();
+							let angle = f32::atan2(direction.y, direction.x);
+							let position = other_object.position() + direction * 0.05;
+							let instance_id = instance_table.insert_new_instance(
+								WhichMesh::EnemyShot,
+								MeshInstance::Object(ObjectInstancePod::zeroed()),
+							);
+							new_objects.push(Object::EnemyShot { position, angle, instance_id });
 						}
 					}
 
@@ -1030,6 +1104,20 @@ pub fn run() {
 								continue 'object_loop;
 							}
 						},
+
+						Object::EnemyShot { position, angle, .. } => {
+							let motion =
+								cgmath::Vector2::<f32> { x: f32::cos(*angle), y: f32::sin(*angle) } * 0.015;
+							*position += motion;
+
+							if position.x <= -1.1
+								|| position.x > 1.1 || position.y <= -0.6
+								|| position.y > 0.6
+							{
+								dead_object_indices.push(object_index);
+								continue 'object_loop;
+							}
+						},
 					}
 				}
 
@@ -1040,6 +1128,8 @@ pub fn run() {
 						instance_table.remove_instance(instance_id);
 					}
 				}
+
+				objects.extend(new_objects.into_iter());
 
 				if spawn_event {
 					spawn_obstacles(&mut objects, &mut instance_table, 2);
@@ -1087,6 +1177,7 @@ pub fn run() {
 					let position = match object {
 						Object::Ship { position, .. } => position,
 						Object::Shot { position, .. } => position,
+						Object::EnemyShot { position, .. } => position,
 						Object::Obstacle { position, .. } => position,
 					};
 					let mesh_angle = match object {
@@ -1096,17 +1187,19 @@ pub fn run() {
 							angle - TAU / 4.0
 						},
 						Object::Shot { angle, .. } => angle - TAU / 4.0,
+						Object::EnemyShot { angle, .. } => angle - TAU / 4.0,
 						Object::Obstacle { angle, .. } => *angle,
 					};
 					let scale = object.scale();
 					let instance_id = match object {
 						Object::Obstacle { instance_id, .. } => instance_id,
 						Object::Shot { instance_id, .. } => instance_id,
+						Object::EnemyShot { instance_id, .. } => instance_id,
 						Object::Ship { instance_id, .. } => instance_id,
 					};
 					let shade_sensitivity = match object {
 						Object::Obstacle { .. } | Object::Ship { .. } => 3.0,
-						Object::Shot { .. } => 0.0,
+						Object::Shot { .. } | Object::EnemyShot { .. } => 0.0,
 					};
 
 					let instances = &mut instance_table
@@ -1133,7 +1226,12 @@ pub fn run() {
 					}
 				}
 
-				for mesh in &[WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+				for mesh in &[
+					WhichMesh::Obstacle,
+					WhichMesh::Ship,
+					WhichMesh::Shot,
+					WhichMesh::EnemyShot,
+				] {
 					let instances = if let MeshInstanceVec::Object(instances) =
 						&instance_table.table[mesh].instances
 					{
@@ -1178,16 +1276,23 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
 
-				for mesh in [WhichMesh::Obstacle, WhichMesh::Ship, WhichMesh::Shot] {
+				for mesh in [
+					WhichMesh::Obstacle,
+					WhichMesh::Ship,
+					WhichMesh::Shot,
+					WhichMesh::EnemyShot,
+				] {
 					let mesh_buffer = match mesh {
 						WhichMesh::Obstacle => &obstacle_vertex_buffer,
 						WhichMesh::Ship => &ship_vertex_buffer,
 						WhichMesh::Shot => &shot_vertex_buffer,
+						WhichMesh::EnemyShot => &enemy_shot_vertex_buffer,
 					};
 					let mesh_len = match mesh {
 						WhichMesh::Obstacle => obstacle_mesh.len(),
 						WhichMesh::Ship => ship_mesh.len(),
 						WhichMesh::Shot => shot_mesh.len(),
+						WhichMesh::EnemyShot => enemy_shot_mesh.len(),
 					};
 					render_pass.set_vertex_buffer(0, mesh_buffer.slice(..));
 					render_pass
