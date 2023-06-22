@@ -1040,9 +1040,9 @@ pub fn run() {
 							&& object.position().distance(other_object.position()) < 0.35
 							&& level == Level::Four
 						{
-							let direction = (object.position() - other_object.position()).normalize();
+							let direction = (other_object.position() - object.position()).normalize();
 							let angle = f32::atan2(direction.y, direction.x);
-							let position = other_object.position() + direction * 0.04;
+							let position = other_object.position() + direction * 0.05;
 							let instance_id = instance_table.insert_new_instance(
 								WhichMesh::EnemyShot,
 								MeshInstance::Object(ObjectInstancePod::zeroed()),
