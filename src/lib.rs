@@ -1006,7 +1006,7 @@ pub fn run() {
 							continue 'object_pairs_loop;
 						}
 						let other_object = objects.get(other_object_index).unwrap();
-						if object.is_shot()
+						if (object.is_shot() || object.is_enemy_shot())
 							&& other_object.is_obstacle()
 							&& object.collide_with(other_object)
 						{
@@ -1029,7 +1029,8 @@ pub fn run() {
 						{
 							let direction = (object.position() - other_object.position()).normalize();
 							let angle = f32::atan2(direction.y, direction.x);
-							let position = other_object.position() + direction * 0.05;
+							let position =
+								other_object.position() + direction * (0.02 + other_object.scale());
 							let instance_id = instance_table.insert_new_instance(
 								WhichMesh::EnemyShot,
 								MeshInstance::Object(ObjectInstancePod::zeroed()),
@@ -1042,7 +1043,8 @@ pub fn run() {
 						{
 							let direction = (other_object.position() - object.position()).normalize();
 							let angle = f32::atan2(direction.y, direction.x);
-							let position = other_object.position() + direction * 0.05;
+							let position =
+								other_object.position() + direction * (0.02 + other_object.scale());
 							let instance_id = instance_table.insert_new_instance(
 								WhichMesh::EnemyShot,
 								MeshInstance::Object(ObjectInstancePod::zeroed()),
@@ -1057,7 +1059,7 @@ pub fn run() {
 					{
 						let direction = (cursor_position - object.position()).normalize();
 						let angle = f32::atan2(direction.y, direction.x);
-						let position = object.position() + direction * 0.05;
+						let position = object.position() + direction * (0.02 + object.scale());
 						let instance_id = instance_table.insert_new_instance(
 							WhichMesh::EnemyShot,
 							MeshInstance::Object(ObjectInstancePod::zeroed()),
