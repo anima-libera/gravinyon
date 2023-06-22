@@ -781,11 +781,13 @@ pub fn run() {
 	enum Level {
 		One,
 		Two,
+		Three,
 	}
 	let arg = std::env::args().nth(1);
 	let level = match arg.as_deref() {
 		Some("1") | Some("one") => Level::One,
 		Some("2") | Some("two") => Level::Two,
+		Some("3") | Some("three") => Level::Three,
 		_ => Level::One,
 	};
 
@@ -828,6 +830,7 @@ pub fn run() {
 		let how_many_obstacles = match level {
 			Level::One => 5,
 			Level::Two => 1,
+			Level::Three => 1,
 		};
 		spawn_obstacles(objects, instance_table, how_many_obstacles);
 	};
@@ -1030,6 +1033,20 @@ pub fn run() {
 							);
 							new_objects.push(Object::EnemyShot { position, angle, instance_id });
 						}
+					}
+
+					if object.is_obstacle()
+						&& object.position().distance(cursor_position) < 0.35
+						&& level == Level::Three
+					{
+						let direction = (cursor_position - object.position()).normalize();
+						let angle = f32::atan2(direction.y, direction.x);
+						let position = object.position() + direction * 0.05;
+						let instance_id = instance_table.insert_new_instance(
+							WhichMesh::EnemyShot,
+							MeshInstance::Object(ObjectInstancePod::zeroed()),
+						);
+						new_objects.push(Object::EnemyShot { position, angle, instance_id });
 					}
 
 					let object = objects.get_mut(object_index).unwrap();
