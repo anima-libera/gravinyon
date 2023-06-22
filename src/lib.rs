@@ -619,8 +619,8 @@ pub fn run() {
 	};
 	let center = [0.0, 0.0, 0.1];
 	add_triangle([center, [0.6, 0.0, 0.0], [0.0, 1.5, 0.0]]);
-	add_triangle([center, [0.0, -7.0, 0.0], [0.6, 0.0, 0.0]]);
-	add_triangle([center, [-0.6, 0.0, 0.0], [0.0, -7.0, 0.0]]);
+	add_triangle([center, [0.0, -3.5, 0.0], [0.6, 0.0, 0.0]]);
+	add_triangle([center, [-0.6, 0.0, 0.0], [0.0, -3.5, 0.0]]);
 	add_triangle([center, [0.0, 1.5, 0.0], [-0.6, 0.0, 0.0]]);
 	let enemy_shot_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 		label: Some("Enemy Shot Vertex Buffer"),
@@ -1142,7 +1142,7 @@ pub fn run() {
 
 						Object::EnemyShot { position, angle, .. } => {
 							let motion =
-								cgmath::Vector2::<f32> { x: f32::cos(*angle), y: f32::sin(*angle) } * 0.015;
+								cgmath::Vector2::<f32> { x: f32::cos(*angle), y: f32::sin(*angle) } * 0.008;
 							*position += motion;
 
 							if position.x <= -1.1
