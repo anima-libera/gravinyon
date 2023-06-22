@@ -782,12 +782,14 @@ pub fn run() {
 		One,
 		Two,
 		Three,
+		Four,
 	}
 	let arg = std::env::args().nth(1);
 	let level = match arg.as_deref() {
 		Some("1") | Some("one") => Level::One,
 		Some("2") | Some("two") => Level::Two,
 		Some("3") | Some("three") => Level::Three,
+		Some("4") | Some("four") => Level::Four,
 		_ => Level::One,
 	};
 
@@ -831,6 +833,7 @@ pub fn run() {
 			Level::One => 5,
 			Level::Two => 1,
 			Level::Three => 1,
+			Level::Four => 2,
 		};
 		spawn_obstacles(objects, instance_table, how_many_obstacles);
 	};
@@ -1027,6 +1030,19 @@ pub fn run() {
 							let direction = (object.position() - other_object.position()).normalize();
 							let angle = f32::atan2(direction.y, direction.x);
 							let position = other_object.position() + direction * 0.05;
+							let instance_id = instance_table.insert_new_instance(
+								WhichMesh::EnemyShot,
+								MeshInstance::Object(ObjectInstancePod::zeroed()),
+							);
+							new_objects.push(Object::EnemyShot { position, angle, instance_id });
+						} else if object.is_obstacle()
+							&& other_object.is_obstacle()
+							&& object.position().distance(other_object.position()) < 0.35
+							&& level == Level::Four
+						{
+							let direction = (object.position() - other_object.position()).normalize();
+							let angle = f32::atan2(direction.y, direction.x);
+							let position = other_object.position() + direction * 0.04;
 							let instance_id = instance_table.insert_new_instance(
 								WhichMesh::EnemyShot,
 								MeshInstance::Object(ObjectInstancePod::zeroed()),
