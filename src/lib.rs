@@ -3,6 +3,7 @@ use std::{collections::HashMap, f32::consts::TAU};
 use bytemuck::Zeroable;
 use cgmath::{InnerSpace, MetricSpace};
 use rand::Rng;
+use rodio::source::Source;
 use wgpu::util::DeviceExt;
 use winit::{
 	event_loop::{ControlFlow, EventLoop},
@@ -528,6 +529,18 @@ pub fn run() {
 		EnemyShot,
 	}
 
+	impl WhichMesh {
+		fn all_meshes() -> impl Iterator<Item = WhichMesh> {
+			[
+				WhichMesh::Obstacle,
+				WhichMesh::Shot,
+				WhichMesh::Ship,
+				WhichMesh::EnemyShot,
+			]
+			.into_iter()
+		}
+	}
+
 	let mut obstacle_mesh = Vec::new();
 	let mut add_triangle = |positions: [[f32; 3]; 3]| {
 		let a: cgmath::Vector3<f32> = positions[0].into();
@@ -708,12 +721,7 @@ pub fn run() {
 	}
 
 	let mut instance_table = InstanceTable { table: HashMap::new() };
-	for mesh in [
-		WhichMesh::Obstacle,
-		WhichMesh::Ship,
-		WhichMesh::Shot,
-		WhichMesh::EnemyShot,
-	] {
+	for mesh in WhichMesh::all_meshes() {
 		instance_table.table.insert(
 			mesh,
 			InstanceArrayForOneMesh {
@@ -776,6 +784,8 @@ pub fn run() {
 				.unused_instances[instance_id.instance_index] = true;
 		}
 	}
+
+	let (_stream, stream_handle) = rodio::OutputStream::try_default().unwrap();
 
 	#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 	enum Level {
@@ -985,6 +995,18 @@ pub fn run() {
 							),
 						};
 						objects.push(shot);
+					}
+					if cfg!(pew_sound) {
+						stream_handle
+							.play_raw(
+								rodio::Decoder::new(std::io::BufReader::new(
+									std::fs::File::open("assets/sounds/pew.wav").unwrap(),
+								))
+								.unwrap()
+								.convert_samples()
+								.amplify(0.2),
+							)
+							.unwrap();
 					}
 					shooting_delay = shooting_delay_max;
 				}
@@ -1261,14 +1283,9 @@ pub fn run() {
 					}
 				}
 
-				for mesh in &[
-					WhichMesh::Obstacle,
-					WhichMesh::Ship,
-					WhichMesh::Shot,
-					WhichMesh::EnemyShot,
-				] {
+				for mesh in WhichMesh::all_meshes() {
 					let instances = if let MeshInstanceVec::Object(instances) =
-						&instance_table.table[mesh].instances
+						&instance_table.table[&mesh].instances
 					{
 						instances
 					} else {
@@ -1279,10 +1296,10 @@ pub fn run() {
 						contents: bytemuck::cast_slice(instances.as_slice()),
 						usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 					});
-					instance_table.table.get_mut(mesh).unwrap().wgpu_buffer = Some(buffer);
-					if let MeshInstanceVec::Object(instances) = &instance_table.table[mesh].instances {
+					instance_table.table.get_mut(&mesh).unwrap().wgpu_buffer = Some(buffer);
+					if let MeshInstanceVec::Object(instances) = &instance_table.table[&mesh].instances {
 						queue.write_buffer(
-							instance_table.table[mesh].wgpu_buffer.as_ref().unwrap(),
+							instance_table.table[&mesh].wgpu_buffer.as_ref().unwrap(),
 							0,
 							bytemuck::cast_slice(instances.as_slice()),
 						);
@@ -1311,12 +1328,7 @@ pub fn run() {
 				render_pass.set_pipeline(&object_render_pipeline);
 				render_pass.set_bind_group(0, &object_shader_bind_group, &[]);
 
-				for mesh in [
-					WhichMesh::Obstacle,
-					WhichMesh::Ship,
-					WhichMesh::Shot,
-					WhichMesh::EnemyShot,
-				] {
+				for mesh in WhichMesh::all_meshes() {
 					let mesh_buffer = match mesh {
 						WhichMesh::Obstacle => &obstacle_vertex_buffer,
 						WhichMesh::Ship => &ship_vertex_buffer,
